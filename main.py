@@ -19,9 +19,6 @@ class MusicTo3D(bpy.types.Operator):
     bl_label = 'Music To 3D'
     bl_options = {'REGISTER', 'UNDO'}
 
-    song_path = bpy.props.StringProperty(name="Song path", description="Path to the song specifying the terrain",
-                                         subtype='FILE_PATH')
-
     def execute(self, context):
         spectrogram = self.get_spectrogram()
         mesh = self.create_new_mesh()
@@ -50,7 +47,9 @@ class MusicTo3D(bpy.types.Operator):
 
     def create_new_object(self, mesh):
         # TODO: the name...
-        return bpy.data.objects.new("M3D Object", mesh)
+        obj = bpy.data.objects.new("M3D Object", mesh)
+        obj['song_path'] = ""
+        return obj
 
     def add_object_to_scene(self, context, obj):
         scene = context.scene
