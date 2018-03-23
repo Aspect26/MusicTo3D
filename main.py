@@ -1,4 +1,5 @@
 import bpy
+import librosa
 
 bl_info = {
     'name': 'Music to 3D',
