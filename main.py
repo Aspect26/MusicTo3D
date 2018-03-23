@@ -1,3 +1,5 @@
+import random
+
 import bpy
 import bmesh
 import librosa
@@ -21,16 +23,26 @@ class MusicTo3D(bpy.types.Operator):
                                          subtype='FILE_PATH')
 
     def execute(self, context):
-        vertices = self.get_terrain_vertices()
+        spectrogram = self.get_spectrogram()
         mesh = self.create_new_mesh()
         obj = self.create_new_object(mesh)
         self.add_object_to_scene(context, obj)
-        self.create_terrain_object(context, vertices)
+        self.create_terrain_object(context, spectrogram)
 
         return {'FINISHED'}
 
-    def get_terrain_vertices(self):
-        return [(0, 0, 0), (1, 0, 0), (0, 1, 0), (1, 1, 0), (0, 2, 0), (1, 2, 0)]
+    def get_spectrogram(self):
+        width = 20
+        height = 50
+        data = []
+
+        for x in range(width):
+            row = []
+            for y in range(height):
+                row.append(random.uniform(0.0, 1.2))
+            data.append(row)
+
+        return data
 
     def create_new_mesh(self):
         # TODO: do something about the name, there can be multiple of these mehses
@@ -46,16 +58,22 @@ class MusicTo3D(bpy.types.Operator):
         scene.objects.active = obj
         bpy.ops.object.mode_set(mode='EDIT')
 
-    def create_terrain_object(self, context, vertex_locations):
+    def create_terrain_object(self, context, spectrogram):
         mesh = bpy.context.object.data
         bm = bmesh.from_edit_mesh(mesh)
 
         vertices = []
-        for vertes_location in vertex_locations:
-            vertices.append(bm.verts.new(vertes_location))
+        for row in range(len(spectrogram)):
+            row_vertices = []
+            for column in range(len(spectrogram[row])):
+                row_vertices.append(bm.verts.new((row, column, spectrogram[row][column])))
 
-        for vertex_index in range(len(vertices) - 2):
-            bm.faces.new((vertices[vertex_index], vertices[vertex_index + 1], vertices[vertex_index + 2]))
+            vertices.append(row_vertices)
+
+        for row in range(len(vertices) - 1):
+            for column in range(len(vertices[row]) - 1):
+                bm.faces.new((vertices[row][column], vertices[row][column + 1], vertices[row + 1][column]))
+                bm.faces.new((vertices[row][column + 1], vertices[row + 1][column + 1], vertices[row + 1][column]))
 
         bmesh.update_edit_mesh(mesh)
 
@@ -63,7 +81,7 @@ class MusicTo3D(bpy.types.Operator):
 def add_terrain_mesh_button(self, context):
     layout = self.layout
     layout.separator()
-    layout.operator(MusicTo3D.bl_idname, text="Sound Terrain", icon="MOD_SUBSURF")
+    layout.operator(MusicTo3D.bl_idname, text="Sound Terrain", icon="MOD_SUBSURF")  # TODO: add custom icon
 
 
 def register():
