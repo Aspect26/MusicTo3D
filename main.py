@@ -1,5 +1,6 @@
 import random
 import traceback
+import numpy as np
 
 import bpy
 import bmesh
@@ -91,17 +92,20 @@ class MusicTo3D(bpy.types.Operator):
         bm = bmesh.from_edit_mesh(mesh)
 
         vertices = []
-        for row in range(len(spectrogram)):
+        for wavelength in range(len(spectrogram)):
             row_vertices = []
-            for column in range(len(spectrogram[row])):
-                row_vertices.append(bm.verts.new((row, column, spectrogram[row][column])))
+            for time_step in range(len(spectrogram[wavelength])):
+                amplitude = spectrogram[wavelength][time_step]
+                logscale_wavelength = (np.log(wavelength) * 3) if wavelength > 0 else 0
+                # TODO: parameterize if user want logscale, and parameterize the multiplier
+                row_vertices.append(bm.verts.new((logscale_wavelength, time_step, amplitude / 80)))
 
             vertices.append(row_vertices)
 
-        for row in range(len(vertices) - 1):
-            for column in range(len(vertices[row]) - 1):
-                bm.faces.new((vertices[row][column], vertices[row][column + 1], vertices[row + 1][column]))
-                bm.faces.new((vertices[row][column + 1], vertices[row + 1][column + 1], vertices[row + 1][column]))
+        for wavelength in range(len(vertices) - 1):
+            for time_step in range(len(vertices[wavelength]) - 1):
+                bm.faces.new((vertices[wavelength][time_step], vertices[wavelength][time_step + 1], vertices[wavelength + 1][time_step]))
+                bm.faces.new((vertices[wavelength][time_step + 1], vertices[wavelength + 1][time_step + 1], vertices[wavelength + 1][time_step]))
 
         bmesh.update_edit_mesh(mesh)
 
