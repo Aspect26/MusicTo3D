@@ -1,4 +1,3 @@
-import random
 import traceback
 import numpy as np
 
@@ -35,6 +34,7 @@ class MusicTo3D(bpy.types.Operator):
         mesh = self.create_new_mesh()
         self.create_new_object(mesh)
         self.add_object_to_scene(context, self.terrain_object)
+        self.add_material_to_object(self.terrain_object)
         self.create_terrain_object(context, spectrogram)
 
     file_path = bpy.props.StringProperty(name='Song file path', description='desc', subtype='FILE_PATH',
@@ -58,20 +58,9 @@ class MusicTo3D(bpy.types.Operator):
             print("ERROR LOADING SONG")
             print(str(e))
             traceback.print_exc()
+            return []
 
         return mel_spectrogram
-
-        width = 20
-        height = 50
-        data = []
-
-        for x in range(width):
-            row = []
-            for y in range(height):
-                row.append(random.uniform(0.0, 1.2))
-            data.append(row)
-
-        return data
 
     def create_new_mesh(self):
         # TODO: do something about the name, there can be multiple of these mehses
@@ -87,6 +76,46 @@ class MusicTo3D(bpy.types.Operator):
         scene.objects.active = obj
         bpy.ops.object.mode_set(mode='EDIT')
 
+    def add_material_to_object(self, obj):
+        material = bpy.data.materials.new(name="Terrain material")
+        material.use_nodes = True
+
+        texture_coordinate_node = material.node_tree.nodes.new('ShaderNodeTexCoord')
+        separate_node = material.node_tree.nodes.new('ShaderNodeSeparateXYZ')
+        material.node_tree.links.new(separate_node.inputs[0], texture_coordinate_node.outputs[3])
+
+        divide_node = material.node_tree.nodes.new('ShaderNodeMath')
+        divide_node.inputs[1].default_value = 9.0
+        divide_node.operation = 'DIVIDE'
+        material.node_tree.links.new(divide_node.inputs[0], separate_node.outputs[2])
+
+        # TODO: set up color ramp...
+        color_ramp_node = material.node_tree.nodes.new('ShaderNodeValToRGB')
+        color_ramp_elements = color_ramp_node.color_ramp.elements
+        # TODO: remove initial elements
+        blue_element = color_ramp_elements.new(2); blue_element.color = (0,0,1,1); blue_element.position = 0.000
+
+        color_ramp_elements.remove(color_ramp_elements[0])
+        color_ramp_elements.remove(color_ramp_elements[0])
+
+        light_blue_element = color_ramp_elements.new(0); light_blue_element.color = (0.007, 0.247, 0.625, 1); light_blue_element.position = 0.008
+        light_blue_element = color_ramp_elements.new(0); light_blue_element.color = (0.007, 0.247, 0.625, 1); light_blue_element.position = 0.014
+        beach_yellow_element = color_ramp_elements.new(0); beach_yellow_element.color = (0.875, 1.0, 0.539, 1); beach_yellow_element.position = 0.04
+        grass_green_element = color_ramp_elements.new(0); grass_green_element.color = (0.008, 0.381, 0.015, 1); grass_green_element.position = 0.452
+        grass_green_element = color_ramp_elements.new(0); grass_green_element.color = (0.008, 0.381, 0.015, 1); grass_green_element.position = 0.662
+        brown_hills_element = color_ramp_elements.new(0); brown_hills_element.color = (0.094, 0.041, 0.0, 1); brown_hills_element.position = 0.770
+
+
+        material.node_tree.links.new(color_ramp_node.inputs[0], divide_node.outputs[0])
+
+        bsdf_node = material.node_tree.nodes.new('ShaderNodeBsdfDiffuse')
+        material.node_tree.links.new(bsdf_node.inputs[0], color_ramp_node.outputs[0])
+
+        material_output = material.node_tree.nodes.get('Material Output')  # Should be there implicitly
+        material.node_tree.links.new(material_output.inputs[0], bsdf_node.outputs[0])
+
+        obj.data.materials.append(material)
+
     def create_terrain_object(self, context, spectrogram):
         mesh = bpy.context.object.data
         bm = bmesh.from_edit_mesh(mesh)
@@ -98,7 +127,19 @@ class MusicTo3D(bpy.types.Operator):
                 amplitude = spectrogram[wavelength][time_step]
                 logscale_wavelength = (np.log(wavelength) * 3) if wavelength > 0 else 0
                 # TODO: parameterize if user want logscale, and parameterize the multiplier
-                row_vertices.append(bm.verts.new((logscale_wavelength, time_step, amplitude / 80)))
+                vertex = [logscale_wavelength, time_step, amplitude / 80]
+
+                # TODO:: rotation around Y!
+                angle = time_step
+                rotation_matrix = np.array([[np.cos(angle), 0, -np.sin(angle), 0],
+                                            [0,             1, 0,              0],
+                                            [np.sin(angle), 0, np.cos(angle),  0],
+                                            [0,             0, 0,              1]])
+                vertex_np = np.array([vertex[0], vertex[1], vertex[2], 0])
+                vertex_np = vertex_np.dot(rotation_matrix)
+                # vertex = [vertex_np[0], vertex_np[1], vertex_np[2]]
+
+                row_vertices.append(bm.verts.new(vertex))
 
             vertices.append(row_vertices)
 
