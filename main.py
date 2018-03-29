@@ -35,6 +35,7 @@ class MusicTo3D(bpy.types.Operator):
         mesh = self.create_new_mesh()
         self.create_new_object(mesh)
         self.add_object_to_scene(context, self.terrain_object)
+        self.add_material_to_object(self.terrain_object)
         self.create_terrain_object(context, spectrogram)
 
     file_path = bpy.props.StringProperty(name='Song file path', description='desc', subtype='FILE_PATH',
@@ -86,6 +87,11 @@ class MusicTo3D(bpy.types.Operator):
         scene.objects.link(obj)
         scene.objects.active = obj
         bpy.ops.object.mode_set(mode='EDIT')
+
+    def add_material_to_object(self, obj):
+        material = bpy.data.materials.new(name="Greeny material")
+        material.diffuse_color = (0.2, 0.7, 0.5)
+        obj.data.materials.append(material)
 
     def create_terrain_object(self, context, spectrogram):
         mesh = bpy.context.object.data
