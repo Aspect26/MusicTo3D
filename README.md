@@ -26,6 +26,14 @@ directory. Lets call this directory *<blender-site-packages>*
 <blender-python>$ ./python3.5m <blender-site-packages>/pip install librosa 
 ```
 
+### ffmpeg
+Librosa library uses audioread package, which in turn requires ffmpeg command to be available. You can install it on Linux
+with the following command:
+
+```shell
+apt-get install ffmpeg
+```
+
 ## The Plugin
 1. Clone / Download the source from [GitHub](https://github.com/Aspect26/MusicTo3D "Plugin's GitHub page")
 2. Open Blender, and go to File -> User Preferences -> Add-ons -> Install Add-on from File... 

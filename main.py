@@ -1,4 +1,5 @@
 import random
+import traceback
 
 import bpy
 import bmesh
@@ -19,16 +20,46 @@ class MusicTo3D(bpy.types.Operator):
     bl_label = 'Music To 3D'
     bl_options = {'REGISTER', 'UNDO'}
 
+    terrain_object = None
+
     def execute(self, context):
-        spectrogram = self.get_spectrogram()
-        mesh = self.create_new_mesh()
-        obj = self.create_new_object(mesh)
-        self.add_object_to_scene(context, obj)
-        self.create_terrain_object(context, spectrogram)
+        if self.terrain_object is None:
+            self.recreate_terrain(context)
 
         return {'FINISHED'}
 
+    def recreate_terrain(self, context):
+        print("SELF: {0}".format(str(self)))
+        spectrogram = self.get_spectrogram()
+        mesh = self.create_new_mesh()
+        self.create_new_object(mesh)
+        self.add_object_to_scene(context, self.terrain_object)
+        self.create_terrain_object(context, spectrogram)
+
+    file_path = bpy.props.StringProperty(name='Song file path', description='desc', subtype='FILE_PATH',
+                                         update=recreate_terrain)
+
     def get_spectrogram(self):
+        try:
+            self.file_path = "song.mp3"
+            print("file_path: {0}".format(self.file_path))
+            waveform, sampling_rate = librosa.load(self.file_path)
+            print("WAVEFORM: {0}".format(str(waveform)))
+            print("WAVEFORM TYPE: {0}".format(type(waveform)))
+            print("WAVEFORM LENGTH: {0}".format(len(waveform)))
+            print("SAMPLING_RATE: {0}".format(sampling_rate))
+            mel_spectrogram = librosa.feature.melspectrogram(y=waveform, sr=sampling_rate)
+            print("MEL_SPECTROGRAM: {0}".format(str(mel_spectrogram)))
+            print("MEL_SPECTROGRAM TYPE: {0}".format(type(mel_spectrogram)))
+            print("MEL_SPECTROGRAM LENGTH: {0}".format(len(mel_spectrogram)))
+            print("LENGTH: {0}".format(len(mel_spectrogram[0])))
+        except Exception as e:
+            print("ERROR LOADING SONG")
+            print(str(e))
+            traceback.print_exc()
+
+        return mel_spectrogram
+
         width = 20
         height = 50
         data = []
@@ -47,9 +78,7 @@ class MusicTo3D(bpy.types.Operator):
 
     def create_new_object(self, mesh):
         # TODO: the name...
-        obj = bpy.data.objects.new("M3D Object", mesh)
-        obj['song_path'] = ""
-        return obj
+        self.terrain_object = bpy.data.objects.new("M3D Object", mesh)
 
     def add_object_to_scene(self, context, obj):
         scene = context.scene
