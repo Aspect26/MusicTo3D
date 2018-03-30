@@ -9,9 +9,8 @@ import librosa
 bl_info = {
     'name': 'Music Terrain',
     'author': 'Julius Flimmel',
-    'version': (0, 2, 2),
+    'version': (0, 2, 3),
     'category': 'Add Mesh',
-    # 'location': 'View3D > UI panel > Music Terrain',
     'description': 'Takes a song and generates an appropriate terrain for it.'
 }
 
@@ -30,12 +29,11 @@ def add_terrain_mesh_button(self, context):
     layout = self.layout
     layout.separator()
     layout.operator(MusicTo3D.bl_idname, text="Sound Terrain", icon="MOD_SUBSURF")
-    # TODO: add custom icon
 
 
 class MusicTo3D(bpy.types.Operator):
     """
-    TODO: add documentation
+    The operator that generates terrain based on some music file and according to multiple parameters
     """
 
     bl_idname = 'music.terrain'
@@ -54,16 +52,24 @@ class MusicTo3D(bpy.types.Operator):
 
 class TerrainGenerator:
     """
-    TODO: documentation
+    Class which takes care of terrain generation
     """
 
     _MESH_NAME = 'Spectrogram Mesh'
     _OBJECT_NAME = 'Music Terrain'
 
+    _MATERIAL_COLOR_RAMP_SCALE = 9.0
+    _TERRAIN_USE_LOG_SCALE = True
+    _TERRAIN_LOG_MULTIPLIER = 3
+    _TERRAIN_HEIGHT_MULTIPLIER = 0.2
+    _TERRAIN_ROTATE = False
+    _TERRAIN_ROTATE_AMOUNT = -np.math.pi / 45
+
     def generate_terrain(self, context, song_path):
         spectrogram = SoundUtils.get_spectrogram(song_path)
-        blender_object = Blender.create_blender_object_with_empty_mesh(TerrainGenerator._OBJECT_NAME, TerrainGenerator._MESH_NAME)
-        material = MaterialFactory.create_material()
+        blender_object = Blender.create_blender_object_with_empty_mesh(TerrainGenerator._OBJECT_NAME,
+                                                                       TerrainGenerator._MESH_NAME)
+        material = MaterialFactory.create_material(self._MATERIAL_COLOR_RAMP_SCALE)
 
         self._initialize_blender_object(context, blender_object, material)
         self._create_terrain_mesh_for_object(blender_object, spectrogram)
@@ -76,39 +82,69 @@ class TerrainGenerator:
 
     @staticmethod
     def _create_terrain_mesh_for_object(blender_object, spectrogram):
-        # TODO: refactor this method
         mesh = blender_object.data
-        bm = bmesh.from_edit_mesh(mesh)
+        bm = bmesh.from_edit_mesh(blender_object.data)
+        vertices = TerrainGenerator._create_terrain_vertices(bm, spectrogram)
+        TerrainGenerator._create_terrain_faces(bm, vertices)
+        bmesh.update_edit_mesh(mesh)
 
+    @staticmethod
+    def _create_terrain_vertices(bm, spectrogram):
         vertices = []
         for wavelength in range(len(spectrogram)):
             row_vertices = []
             for time_step in range(len(spectrogram[wavelength])):
-                amplitude = spectrogram[wavelength][time_step]
-                logscale_wavelength = (np.log(wavelength) * 3) if wavelength > 0 else 0
-                # TODO: parameterize if user want logscale, and parameterize the multiplier
-                vertex = [logscale_wavelength, time_step, amplitude / 5]
-
-                # TODO:: rotation around Y!
-                angle = time_step
-                rotation_matrix = np.array([[np.cos(angle), 0, -np.sin(angle), 0],
-                                            [0,             1, 0,              0],
-                                            [np.sin(angle), 0, np.cos(angle),  0],
-                                            [0,             0, 0,              1]])
-                vertex_np = np.array([vertex[0], vertex[1], vertex[2], 0])
-                vertex_np = vertex_np.dot(rotation_matrix)
-                # vertex = [vertex_np[0], vertex_np[1], vertex_np[2]]
-
+                vertex = TerrainGenerator._create_vertex_from_spectrogram_point(wavelength, time_step,
+                                                                                spectrogram[wavelength, time_step])
                 row_vertices.append(bm.verts.new(vertex))
 
             vertices.append(row_vertices)
 
+        return vertices
+
+    @staticmethod
+    def _create_vertex_from_spectrogram_point(x, y, z):
+        """
+        :param x: wavelength
+        :param y: time step
+        :param z: amplitude
+        :return:
+        """
+        if TerrainGenerator._TERRAIN_USE_LOG_SCALE:
+            x = (np.log(x) * TerrainGenerator._TERRAIN_LOG_MULTIPLIER) if x > 0 else 0
+            z = z * TerrainGenerator._TERRAIN_HEIGHT_MULTIPLIER
+
+        vertex = [x, y, z]
+
+        if TerrainGenerator._TERRAIN_ROTATE:
+            vertex = TerrainGenerator._rotate_vertex_around_y(vertex, y * TerrainGenerator._TERRAIN_ROTATE_AMOUNT)
+
+        return vertex
+
+    @staticmethod
+    def _rotate_vertex_around_y(vertex, angle):
+        """
+        Works only with logscale.
+        """
+        _X_DISTANCE_FROM_ORIGIN = 7
+        cos = np.cos(angle)
+        sin = np.sin(angle)
+        rotation_matrix = np.array([[cos, 0, -sin, 0],
+                                    [0, 1, 0, 0],
+                                    [sin, 0, cos, 0],
+                                    [0, 0, 0, 1]])
+        np_vertex = np.array([vertex[0] - _X_DISTANCE_FROM_ORIGIN, vertex[1], vertex[2], 0])
+        np_vertex = np_vertex.dot(rotation_matrix)
+        return [np_vertex[0] + _X_DISTANCE_FROM_ORIGIN, np_vertex[1], np_vertex[2]]
+
+    @staticmethod
+    def _create_terrain_faces(bm, vertices):
         for wavelength in range(len(vertices) - 1):
             for time_step in range(len(vertices[wavelength]) - 1):
-                bm.faces.new((vertices[wavelength][time_step], vertices[wavelength][time_step + 1], vertices[wavelength + 1][time_step]))
-                bm.faces.new((vertices[wavelength][time_step + 1], vertices[wavelength + 1][time_step + 1], vertices[wavelength + 1][time_step]))
-
-        bmesh.update_edit_mesh(mesh)
+                bm.faces.new((vertices[wavelength][time_step], vertices[wavelength][time_step + 1],
+                             vertices[wavelength + 1][time_step]))
+                bm.faces.new((vertices[wavelength][time_step + 1], vertices[wavelength + 1][time_step + 1],
+                             vertices[wavelength + 1][time_step]))
 
 
 class ColorRampElement:
@@ -134,16 +170,16 @@ class MaterialFactory:
     }
 
     @staticmethod
-    def create_material():
+    def create_material(color_ramp_scale):
         material_data = MaterialFactory._DEFAULT_MATERIAL
         material = Blender.create_node_material(material_data['name'])
 
         texture_coordinate_node = MaterialNodes.TextureCoordinate(material)
         separate_node = MaterialNodes.SeparateXYZ(material)
-        divide_node = MaterialNodes.DivideBy(material, 9.0)  # TODO: parameterize this
+        divide_node = MaterialNodes.DivideBy(material, color_ramp_scale)
         color_ramp_node = MaterialFactory._create_color_ramp_node(material, material_data['elements'])
         bsdf_node = MaterialNodes.BSDFDiffuse(material)
-        material_output_node = MaterialNodes.MaterialOutput(material, Blender.find_node_in_material(material, MaterialNodes.MaterialOutput.IDENTIFIER))  # TODO: check if it is not None (if it is, the Cycles renderer is off)
+        material_output_node = MaterialNodes.MaterialOutput(material, Blender.find_node_in_material(material, MaterialNodes.MaterialOutput.IDENTIFIER))
 
         MaterialNodes.link(material, texture_coordinate_node.outputs.object, separate_node.inputs.vector)
         MaterialNodes.link(material, separate_node.outputs.z, divide_node.inputs.value)
