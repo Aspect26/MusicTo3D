@@ -9,7 +9,7 @@ import librosa
 bl_info = {
     'name': 'Music Terrain',
     'author': 'Julius Flimmel',
-    'version': (0, 2, 1),
+    'version': (0, 2, 2),
     'category': 'Add Mesh',
     # 'location': 'View3D > UI panel > Music Terrain',
     'description': 'Takes a song and generates an appropriate terrain for it.'
@@ -145,11 +145,11 @@ class MaterialFactory:
         bsdf_node = MaterialNodes.BSDFDiffuse(material)
         material_output_node = MaterialNodes.MaterialOutput(material, Blender.find_node_in_material(material, MaterialNodes.MaterialOutput.IDENTIFIER))  # TODO: check if it is not None (if it is, the Cycles renderer is off)
 
-        MaterialNodes.link(material, texture_coordinate_node.output(MaterialNodes.TextureCoordinate.Outputs.Object), separate_node.input(MaterialNodes.SeparateXYZ.Inputs.Vector))
-        MaterialNodes.link(material, separate_node.output(MaterialNodes.SeparateXYZ.Outputs.Z), divide_node.input(MaterialNodes.DivideBy.Inputs.VALUE))
-        MaterialNodes.link(material, divide_node.output(MaterialNodes.DivideBy.Outputs.VALUE), color_ramp_node.input(MaterialNodes.ColorRamp.Inputs.Factor))
-        MaterialNodes.link(material, color_ramp_node.output(MaterialNodes.ColorRamp.Outputs.Color), bsdf_node.input(MaterialNodes.BSDFDiffuse.Inputs.Color))
-        MaterialNodes.link(material, bsdf_node.output(MaterialNodes.BSDFDiffuse.Outputs.BSDF), material_output_node.input(MaterialNodes.MaterialOutput.Inputs.Surface))
+        MaterialNodes.link(material, texture_coordinate_node.outputs.object, separate_node.inputs.vector)
+        MaterialNodes.link(material, separate_node.outputs.z, divide_node.inputs.value)
+        MaterialNodes.link(material, divide_node.outputs.value, color_ramp_node.inputs.factor)
+        MaterialNodes.link(material, color_ramp_node.outputs.color, bsdf_node.inputs.color)
+        MaterialNodes.link(material, bsdf_node.outputs.bsdf, material_output_node.inputs.surface)
 
         return material
 
@@ -241,6 +241,22 @@ class Blender:
         return material.node_tree.nodes.get(node_identifier)
 
 
+class NodeOutputs:
+    def __init__(self, node):
+        self._node = node
+
+    def _get(self, index):
+        return self._node.outputs[index]
+
+
+class NodeInputs:
+    def __init__(self, node):
+        self._node = node
+
+    def _get(self, index):
+        return self._node.inputs[index]
+
+
 class MaterialNodes:
     """
     Our wrapper for Blender's material nodes, because working directly with them is too inconvenient.
@@ -256,98 +272,139 @@ class MaterialNodes:
             self._material = material
             self._node = Blender.create_material_node(material, node_class_name) if node is None else node
 
-        def output(self, index):
-            return self._node.outputs[index]
-
-        def input(self, index):
-            return self._node.inputs[index]
-
     class TextureCoordinate(MaterialNode):
 
-        class Outputs:
-            Generated = 0
-            Normal = 1
-            UV = 2
-            Object = 3
-            Camera = 4
-            Window = 5
-            Reflection = 6
+        class Outputs(NodeOutputs):
+            @property
+            def generated(self): return self._get(0)
+
+            @property
+            def normal(self): return self._get(1)
+
+            @property
+            def uv(self): return self._get(2)
+
+            @property
+            def object(self): return self._get(3)
+
+            @property
+            def camera(self): return self._get(4)
+
+            @property
+            def window(self): return self._get(5)
+
+            @property
+            def reflection(self): return self._get(6)
 
         IDENTIFIER = 'ShaderNodeTexCoord'
 
         def __init__(self, material):
             super().__init__(material, self.IDENTIFIER)
+            self.outputs = MaterialNodes.TextureCoordinate.Outputs(self._node)
 
     class SeparateXYZ(MaterialNode):
 
-        class Inputs:
-            Vector = 0
+        class Inputs(NodeInputs):
+            @property
+            def vector(self): return self._get(0)
 
-        class Outputs:
-            X = 0
-            Y = 1
-            Z = 2
+        class Outputs(NodeOutputs):
+            @property
+            def x(self): return self._get(0)
+
+            @property
+            def y(self): return self._get(1)
+
+            @property
+            def z(self): return self._get(2)
 
         IDENTIFIER = 'ShaderNodeSeparateXYZ'
 
         def __init__(self, material):
             super().__init__(material, self.IDENTIFIER)
+            self.outputs = MaterialNodes.SeparateXYZ.Outputs(self._node)
+            self.inputs = MaterialNodes.SeparateXYZ.Inputs(self._node)
 
     class DivideBy(MaterialNode):
 
-        class Inputs:
-            VALUE = 0
+        class Inputs(NodeInputs):
+            @property
+            def value(self): return self._get(0)
 
-        class Outputs:
-            VALUE = 0
+        class Outputs(NodeOutputs):
+            @property
+            def value(self): return self._get(0)
 
         IDENTIFIER = 'ShaderNodeMath'
 
         def __init__(self, material, value):
             super().__init__(material, self.IDENTIFIER)
+            self.outputs = MaterialNodes.DivideBy.Outputs(self._node)
+            self.inputs = MaterialNodes.DivideBy.Inputs(self._node)
+
             self._node.operation = 'DIVIDE'
             self._node.inputs[1].default_value = value
 
     class ColorRamp(MaterialNode):
 
-        class Inputs:
-            Factor = 0
+        class Inputs(NodeInputs):
+            @property
+            def factor(self): return self._get(0)
 
-        class Outputs:
-            Color = 0
-            Alpha = 1
+        class Outputs(NodeOutputs):
+            @property
+            def color(self): return self._get(0)
+
+            @property
+            def alpha(self): return self._get(1)
 
         IDENTIFIER = 'ShaderNodeValToRGB'
 
         def __init__(self, material):
             super().__init__(material, self.IDENTIFIER)
+            self.outputs = MaterialNodes.ColorRamp.Outputs(self._node)
+            self.inputs = MaterialNodes.ColorRamp.Inputs(self._node)
 
         def get_elements(self):
             return self._node.color_ramp.elements
 
     class BSDFDiffuse(MaterialNode):
 
-        class Inputs:
-            Color = 0
-            Roughness = 1
-            Normal = 2
+        class Inputs(NodeInputs):
+            @property
+            def color(self): return self._get(0)
 
-        class Outputs:
-            BSDF = 0
+            @property
+            def roughness(self): return self._get(1)
+
+            @property
+            def normal(self): return self._get(2)
+
+        class Outputs(NodeOutputs):
+            @property
+            def bsdf(self): return self._get(0)
 
         IDENTIFIER = 'ShaderNodeBsdfDiffuse'
 
         def __init__(self, material):
             super().__init__(material, self.IDENTIFIER)
+            self.outputs = MaterialNodes.BSDFDiffuse.Outputs(self._node)
+            self.inputs = MaterialNodes.BSDFDiffuse.Inputs(self._node)
 
     class MaterialOutput(MaterialNode):
 
-        class Inputs:
-            Surface = 0
-            Volume = 1
-            Displacement = 2
+        class Inputs(NodeInputs):
+            @property
+            def surface(self): return self._get(0)
+
+            @property
+            def volume(self): return self._get(1)
+
+            @property
+            def displacement(self): return self._get(2)
 
         IDENTIFIER = 'Material Output'
 
         def __init__(self, material, node):
             super().__init__(material, self.IDENTIFIER, node)
+            self.inputs = MaterialNodes.MaterialOutput.Inputs(self._node)
