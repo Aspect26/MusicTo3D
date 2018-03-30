@@ -42,3 +42,11 @@ apt-get install ffmpeg
 # Usage
 
 NOT FINISHED YET
+
+# Known bugs
+
+* The plugin does not work with the Blender renderer, it needs the Cycles renderer,
+* The generated terrain does not is not lighted at the beginning, it needs to be touched to get lighted. This means,
+e.g., moving it a bit, or selecting it from the objects panel,
+* The Color Ramp Node in our material is a bit bugged at the beginning, and it needs to be touched to get updated.
+This means, e.g., setting any of its parameters to the same value.

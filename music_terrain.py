@@ -9,7 +9,7 @@ import librosa
 bl_info = {
     'name': 'Music Terrain',
     'author': 'Julius Flimmel',
-    'version': (0, 2, 0),
+    'version': (0, 2, 1),
     'category': 'Add Mesh',
     # 'location': 'View3D > UI panel > Music Terrain',
     'description': 'Takes a song and generates an appropriate terrain for it.'
@@ -111,10 +111,26 @@ class TerrainGenerator:
         bmesh.update_edit_mesh(mesh)
 
 
+class ColorRampElement:
+
+    def __init__(self, position, color):
+        self.position = position
+        self.color = color
+
+
 class MaterialFactory:
 
     _DEFAULT_MATERIAL = {
-        'name': 'Terrain material'
+        'name': 'Terrain material',
+        'elements': [
+            ColorRampElement(0.001, (0.000, 0.000, 1.000, 1)),
+            ColorRampElement(0.008, (0.007, 0.247, 0.625, 1)),
+            ColorRampElement(0.014, (0.007, 0.247, 0.625, 1)),
+            ColorRampElement(0.040, (0.875, 1.000, 0.539, 1)),
+            ColorRampElement(0.452, (0.008, 0.381, 0.015, 1)),
+            ColorRampElement(0.662, (0.008, 0.381, 0.015, 1)),
+            ColorRampElement(0.770, (0.094, 0.041, 0.000, 1)),
+        ]
     }
 
     @staticmethod
@@ -125,7 +141,7 @@ class MaterialFactory:
         texture_coordinate_node = MaterialNodes.TextureCoordinate(material)
         separate_node = MaterialNodes.SeparateXYZ(material)
         divide_node = MaterialNodes.DivideBy(material, 9.0)  # TODO: parameterize this
-        color_ramp_node = MaterialNodes.ColorRamp(material)
+        color_ramp_node = MaterialFactory._create_color_ramp_node(material, material_data['elements'])
         bsdf_node = MaterialNodes.BSDFDiffuse(material)
         material_output_node = MaterialNodes.MaterialOutput(material, Blender.find_node_in_material(material, MaterialNodes.MaterialOutput.IDENTIFIER))  # TODO: check if it is not None (if it is, the Cycles renderer is off)
 
@@ -135,27 +151,32 @@ class MaterialFactory:
         MaterialNodes.link(material, color_ramp_node.output(MaterialNodes.ColorRamp.Outputs.Color), bsdf_node.input(MaterialNodes.BSDFDiffuse.Inputs.Color))
         MaterialNodes.link(material, bsdf_node.output(MaterialNodes.BSDFDiffuse.Outputs.BSDF), material_output_node.input(MaterialNodes.MaterialOutput.Inputs.Surface))
 
-
-        color_ramp_elements = color_ramp_node.get_elements()
-
-        blue_element = color_ramp_elements.new(2); blue_element.color = (0,0,1,1); blue_element.position = 0.000
-
-        light_blue_element = color_ramp_elements.new(2); light_blue_element.color = (0.007, 0.247, 0.625, 1); light_blue_element.position = 0.008
-        light_blue_element = color_ramp_elements.new(2); light_blue_element.color = (0.007, 0.247, 0.625, 1); light_blue_element.position = 0.014
-        beach_yellow_element = color_ramp_elements.new(2); beach_yellow_element.color = (0.875, 1.0, 0.539, 1); beach_yellow_element.position = 0.04
-        grass_green_element = color_ramp_elements.new(2); grass_green_element.color = (0.008, 0.381, 0.015, 1); grass_green_element.position = 0.452
-        grass_green_element = color_ramp_elements.new(2); grass_green_element.color = (0.008, 0.381, 0.015, 1); grass_green_element.position = 0.662
-        brown_hills_element = color_ramp_elements.new(2); brown_hills_element.color = (0.094, 0.041, 0.0, 1); brown_hills_element.position = 0.770
-
-        color_ramp_elements.remove(color_ramp_elements[0])
-        color_ramp_elements.remove(color_ramp_elements[0])
-
         return material
+
+    @staticmethod
+    def _create_color_ramp_node(material, data):
+        node = MaterialNodes.ColorRamp(material)
+        color_ramp_elements = node.get_elements()
+
+        # There are initially two elements that we need to get rid of (One at the beginning and one at the end). Another
+        # problem is, that there needs to be at least one element present. So we delete one now, and second one later.
+
+        color_ramp_elements.remove(color_ramp_elements[0])
+
+        for element_data in data:
+            # There are already two elements from the beginning
+            element = color_ramp_elements.new(0)
+            element.color = element_data.color
+            element.position = element_data.position
+
+        color_ramp_elements.remove(color_ramp_elements[len(data)])
+
+        return node
 
 
 class SoundUtils:
     """
-    TODO: docs
+    Utility functions for audio processing
     """
 
     @staticmethod
@@ -174,7 +195,7 @@ class SoundUtils:
 
 class Blender:
     """
-    TODO: docs
+    Our wrapper for the calls on Blender's bpy' package because it is unreadable.
     """
 
     @staticmethod
@@ -222,7 +243,7 @@ class Blender:
 
 class MaterialNodes:
     """
-    TODO: docs
+    Our wrapper for Blender's material nodes, because working directly with them is too inconvenient.
     """
 
     @staticmethod
