@@ -9,9 +9,9 @@ import librosa
 bl_info = {
     'name': 'Music Terrain',
     'author': 'Julius Flimmel',
-    'version': (0, 3, 0),
+    'version': (0, 3, 1),
     'category': 'Add Mesh',
-    'description': 'Takes a song and generates an appropriate terrain for it.'
+    'description': 'Takes a music file and generates terrain for it based on its spectrogram.'
 }
 
 
@@ -25,20 +25,84 @@ def unregister():
     bpy.utils.unregister_class(PropertiesPanel)
 
 
-def init_addon_properties():
-    Properties.add_property_to_scene(Properties.MUSIC_PATH, bpy.props.StringProperty(name="Path to the music file",
-                                                                                     subtype='FILE_PATH'))
-
-
 class Properties:
-    MUSIC_PATH = 'MusicPath'
+    """
+    Specifies global properties that are used to parameterize the terrain generation
+    """
+
+    FILE_PATH = 'FilePath'
+    OBJECT_NAME = 'ObjectName'
+    MESH_NAME = 'MeshName'
+
+    MATERIAL_COLOR_RAMP_SCALE = 'MaterialColorRampScale'
+
+    TERRAIN_USE_LOG_SCALE = 'TerrainUseLogScale'
+    TERRAIN_WIDTH_MULTIPLIER = 'TerrainSizeMultiplier'
+    TERRAIN_HEIGHT_MULTIPLIER = 'TerrainHeightMultiplier'
+    TERRAIN_STEP_MULTIPLIER = 'TerrainStepMultiplier'
+    TERRAIN_STEPS = 'TerrainSteps'
+    TERRAIN_STEPS_OFFSET = 'TerrainStepsOffset'
+
+    EFFECT_ROTATE = 'EffectRotate'
+    EFFECT_ROTATE_AMOUNT = 'EffectRotateAmount'
 
     @staticmethod
-    def add_property_to_scene(property_name, property):
-        setattr(bpy.types.Scene, property_name, property)
+    def add_to_scene(scene):
+        Properties._add_property_to_scene(scene, Properties.FILE_PATH,
+                                          bpy.props.StringProperty(name="File path", description='Path to the music file', subtype='FILE_PATH'),
+                                          './song.mp3')
+        Properties._add_property_to_scene(scene, Properties.OBJECT_NAME,
+                                          bpy.props.StringProperty(name="Object name", description='Name of the object that will be generated'),
+                                          'Music Terrain')
+        Properties._add_property_to_scene(scene, Properties.MESH_NAME,
+                                          bpy.props.StringProperty(name="Mesh name", description='Name of the mesh component of the generated object'),
+                                          'Spectrogram Mesh')
+        Properties._add_property_to_scene(scene, Properties.MATERIAL_COLOR_RAMP_SCALE,
+                                          bpy.props.FloatProperty(name="Material height scale", description='Multiplier for the material color change steps height'),
+                                          9.0)
+        Properties._add_property_to_scene(scene, Properties.TERRAIN_USE_LOG_SCALE,
+                                          bpy.props.BoolProperty(name="LogScale", description='Use logscale for the wave axis?'),
+                                          True)
+        Properties._add_property_to_scene(scene, Properties.TERRAIN_WIDTH_MULTIPLIER,
+                                          bpy.props.FloatProperty(name="Width multiplier"),
+                                          3.0)
+        Properties._add_property_to_scene(scene, Properties.TERRAIN_HEIGHT_MULTIPLIER,
+                                          bpy.props.FloatProperty(name="Height multiplier"),
+                                          0.2)
+        Properties._add_property_to_scene(scene, Properties.TERRAIN_STEP_MULTIPLIER,
+                                          bpy.props.FloatProperty(name='Step multiplier'),
+                                          0.5)
+        Properties._add_property_to_scene(scene, Properties.TERRAIN_STEPS,
+                                          bpy.props.IntProperty(name='Steps', description='Number of the generated steps'),
+                                          50)
+        Properties._add_property_to_scene(scene, Properties.TERRAIN_STEPS_OFFSET,
+                                          bpy.props.IntProperty(name='Steps offset', description='NOT IMPLEMENTED YET'),
+                                          0)
+        Properties._add_property_to_scene(scene, Properties.EFFECT_ROTATE,
+                                          bpy.props.BoolProperty(name="Effect: Rotate", description='Add rotation effect. The terrain is rotated along the \'time\' axis'),
+                                          False)
+        Properties._add_property_to_scene(scene, Properties.EFFECT_ROTATE_AMOUNT,
+                                          bpy.props.FloatProperty(name="Effect: rotate - amount", description='Degrees to rotate by in each step'),
+                                          3)
 
     @staticmethod
-    def get_property(scene, property_name):
+    def get_all(scene):
+        return TerrainGeneratorConfiguration(
+            Properties._get(scene, Properties.FILE_PATH), Properties._get(scene, Properties.OBJECT_NAME),
+            Properties._get(scene, Properties.MESH_NAME), Properties._get(scene, Properties.MATERIAL_COLOR_RAMP_SCALE),
+            Properties._get(scene, Properties.TERRAIN_USE_LOG_SCALE), Properties._get(scene, Properties.TERRAIN_WIDTH_MULTIPLIER),
+            Properties._get(scene, Properties.TERRAIN_HEIGHT_MULTIPLIER), Properties._get(scene, Properties.TERRAIN_STEPS),
+            Properties._get(scene, Properties.TERRAIN_STEP_MULTIPLIER), Properties._get(scene, Properties.TERRAIN_STEPS_OFFSET),
+            Properties._get(scene, Properties.EFFECT_ROTATE), Properties._get(scene, Properties.EFFECT_ROTATE_AMOUNT)
+        )
+
+    @staticmethod
+    def _add_property_to_scene(scene, property_identifier, property_value, default_value):
+        setattr(bpy.types.Scene, property_identifier, property_value)
+        scene[property_identifier] = default_value
+
+    @staticmethod
+    def _get(scene, property_name):
         return getattr(scene, property_name)
 
 
@@ -54,7 +118,7 @@ class GenerationOperator(bpy.types.Operator):
     def execute(self, context):
         try:
             generator = TerrainGenerator()
-            generator.generate_terrain(context)
+            generator.generate_terrain(context, Properties.get_all(context.scene))
         except Exception:
             traceback.print_exc()
 
@@ -73,26 +137,38 @@ class PropertiesPanel(bpy.types.Panel):
     bl_category = 'Music Terrain'
 
     def draw(self, context):
-        row = self.layout.row()
-        row.prop(context.scene, Properties.MUSIC_PATH)
+        self.layout.row().prop(context.scene, Properties.FILE_PATH)
+        self.layout.row().prop(context.scene, Properties.OBJECT_NAME)
+        self.layout.row().prop(context.scene, Properties.MESH_NAME)
+        self.layout.row().prop(context.scene, Properties.MATERIAL_COLOR_RAMP_SCALE)
+        self.layout.row().prop(context.scene, Properties.TERRAIN_USE_LOG_SCALE)
+        self.layout.row().prop(context.scene, Properties.TERRAIN_WIDTH_MULTIPLIER)
+        self.layout.row().prop(context.scene, Properties.TERRAIN_HEIGHT_MULTIPLIER)
+        self.layout.row().prop(context.scene, Properties.TERRAIN_STEPS)
+        self.layout.row().prop(context.scene, Properties.TERRAIN_STEP_MULTIPLIER)
+        self.layout.row().prop(context.scene, Properties.TERRAIN_STEPS_OFFSET)
+        self.layout.row().prop(context.scene, Properties.EFFECT_ROTATE)
+        self.layout.row().prop(context.scene, Properties.EFFECT_ROTATE_AMOUNT)
 
         self.layout.operator(GenerationOperator.bl_idname, text="Generate Terrain")
 
 
-class InitMusicTo3DPanel(bpy.types.Operator):
-    bl_idname = 'music.terrain.panel.init'
-    bl_label = 'Init panel properties'
+class TerrainGeneratorConfiguration:
 
-    def execute(self, context):
-        if not context.scene.initialized:
-            context.scene.initialized = True
-            context.scene.my_prop = "initialized"
-            self.initalize_scene_panel_properties(context.scene)
-        return {'FINISHED'}
-
-    @staticmethod
-    def initialize_scene_panel_properties(scene):
-        scene[Properties.MUSIC_PATH] = 'song.mp3'
+    def __init__(self, file_path, object_name, mesh_name, material_scale, use_log_scale, width_multiplier,
+                 height_multiplier, steps, step_multiplier, steps_offset, effect_rotate, effect_rotate_amount):
+        self.file_path = file_path
+        self.object_name = object_name
+        self.mesh_name = mesh_name
+        self.material_scale = material_scale
+        self.use_log_scale = use_log_scale
+        self.width_multiplier = width_multiplier
+        self.height_multiplier = height_multiplier
+        self.steps = steps
+        self.step_multiplier = step_multiplier
+        self.steps_offset = steps_offset
+        self.effect_rotate = effect_rotate
+        self.effect_rotate_amount = effect_rotate_amount
 
 
 class TerrainGenerator:
@@ -100,24 +176,14 @@ class TerrainGenerator:
     Class which takes care of terrain generation
     """
 
-    _MESH_NAME = 'Spectrogram Mesh'
-    _OBJECT_NAME = 'Music Terrain'
-
-    _MATERIAL_COLOR_RAMP_SCALE = 9.0
-    _TERRAIN_USE_LOG_SCALE = True
-    _TERRAIN_LOG_MULTIPLIER = 3
-    _TERRAIN_HEIGHT_MULTIPLIER = 0.2
-    _TERRAIN_ROTATE = False
-    _TERRAIN_ROTATE_AMOUNT = -np.math.pi / 45
-
-    def generate_terrain(self, context):
-        spectrogram = SoundUtils.get_spectrogram(Properties.get_property(context.scene, Properties.MUSIC_PATH))
-        blender_object = Blender.create_blender_object_with_empty_mesh(TerrainGenerator._OBJECT_NAME,
-                                                                       TerrainGenerator._MESH_NAME)
-        material = MaterialFactory.create_material(self._MATERIAL_COLOR_RAMP_SCALE)
+    def generate_terrain(self, context, configuration: TerrainGeneratorConfiguration):
+        spectrogram = SoundUtils.get_spectrogram(configuration.file_path)
+        blender_object = Blender.create_blender_object_with_empty_mesh(configuration.object_name,
+                                                                       configuration.mesh_name)
+        material = MaterialFactory.create_material(configuration.material_scale)
 
         self._initialize_blender_object(context, blender_object, material)
-        self._create_terrain_mesh_for_object(blender_object, spectrogram)
+        self._create_terrain_mesh_for_object(blender_object, spectrogram, configuration)
 
     @staticmethod
     def _initialize_blender_object(context, blender_object, material):
@@ -126,21 +192,22 @@ class TerrainGenerator:
         Blender.add_material_to_object(blender_object, material)
 
     @staticmethod
-    def _create_terrain_mesh_for_object(blender_object, spectrogram):
+    def _create_terrain_mesh_for_object(blender_object, spectrogram, configuration):
         mesh = blender_object.data
         bm = bmesh.from_edit_mesh(blender_object.data)
-        vertices = TerrainGenerator._create_terrain_vertices(bm, spectrogram)
+        vertices = TerrainGenerator._create_terrain_vertices(bm, spectrogram, configuration)
         TerrainGenerator._create_terrain_faces(bm, vertices)
         bmesh.update_edit_mesh(mesh)
 
     @staticmethod
-    def _create_terrain_vertices(bm, spectrogram):
+    def _create_terrain_vertices(bm, spectrogram, configuration):
         vertices = []
         for wavelength in range(len(spectrogram)):
             row_vertices = []
-            for time_step in range(len(spectrogram[wavelength])):
+            for time_step in range(configuration.steps if configuration.steps < len(spectrogram[wavelength]) else len(spectrogram[wavelength])):
                 vertex = TerrainGenerator._create_vertex_from_spectrogram_point(wavelength, time_step,
-                                                                                spectrogram[wavelength, time_step])
+                                                                                spectrogram[wavelength, time_step],
+                                                                                configuration)
                 row_vertices.append(bm.verts.new(vertex))
 
             vertices.append(row_vertices)
@@ -148,21 +215,25 @@ class TerrainGenerator:
         return vertices
 
     @staticmethod
-    def _create_vertex_from_spectrogram_point(x, y, z):
+    def _create_vertex_from_spectrogram_point(x, y, z, configuration: TerrainGeneratorConfiguration):
         """
         :param x: wavelength
         :param y: time step
         :param z: amplitude
         :return:
         """
-        if TerrainGenerator._TERRAIN_USE_LOG_SCALE:
-            x = (np.log(x) * TerrainGenerator._TERRAIN_LOG_MULTIPLIER) if x > 0 else 0
-            z = z * TerrainGenerator._TERRAIN_HEIGHT_MULTIPLIER
+        if configuration.use_log_scale:
+            x = (np.log(x) * configuration.width_multiplier) if x > 0 else 0
+        else:
+            x = x * configuration.width_multiplier
+
+        z = z * configuration.height_multiplier
+        y = y * configuration.step_multiplier
 
         vertex = [x, y, z]
-
-        if TerrainGenerator._TERRAIN_ROTATE:
-            vertex = TerrainGenerator._rotate_vertex_around_y(vertex, y * TerrainGenerator._TERRAIN_ROTATE_AMOUNT)
+        if configuration.effect_rotate:
+            rotation_amount = np.deg2rad(configuration.effect_rotate_amount)
+            vertex = TerrainGenerator._rotate_vertex_around_y(vertex, y * rotation_amount)
 
         return vertex
 
@@ -491,4 +562,4 @@ class MaterialNodes:
             self.inputs = MaterialNodes.MaterialOutput.Inputs(self._node)
 
 
-init_addon_properties()
+Properties.add_to_scene(bpy.context.scene)
