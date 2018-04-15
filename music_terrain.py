@@ -9,7 +9,7 @@ import librosa
 bl_info = {
     'name': 'Music Terrain',
     'author': 'Julius Flimmel',
-    'version': (0, 3, 1),
+    'version': (0, 3, 2),
     'category': 'Add Mesh',
     'description': 'Takes a music file and generates terrain for it based on its spectrogram.'
 }
@@ -40,8 +40,8 @@ class Properties:
     TERRAIN_WIDTH_MULTIPLIER = 'TerrainSizeMultiplier'
     TERRAIN_HEIGHT_MULTIPLIER = 'TerrainHeightMultiplier'
     TERRAIN_STEP_MULTIPLIER = 'TerrainStepMultiplier'
-    TERRAIN_STEPS = 'TerrainSteps'
-    TERRAIN_STEPS_OFFSET = 'TerrainStepsOffset'
+    SONG_DURATION = 'TerrainSteps'
+    OFFSET = 'TerrainStepsOffset'
 
     EFFECT_ROTATE = 'EffectRotate'
     EFFECT_ROTATE_AMOUNT = 'EffectRotateAmount'
@@ -72,11 +72,11 @@ class Properties:
         Properties._add_property_to_scene(scene, Properties.TERRAIN_STEP_MULTIPLIER,
                                           bpy.props.FloatProperty(name='Step multiplier'),
                                           0.5)
-        Properties._add_property_to_scene(scene, Properties.TERRAIN_STEPS,
-                                          bpy.props.IntProperty(name='Steps', description='Number of the generated steps'),
-                                          50)
-        Properties._add_property_to_scene(scene, Properties.TERRAIN_STEPS_OFFSET,
-                                          bpy.props.IntProperty(name='Steps offset', description='NOT IMPLEMENTED YET'),
+        Properties._add_property_to_scene(scene, Properties.SONG_DURATION,
+                                          bpy.props.FloatProperty(name='Duration', description='Duration of the sampled song (in seconds). Zero to load whole song'),
+                                          2.0)
+        Properties._add_property_to_scene(scene, Properties.OFFSET,
+                                          bpy.props.FloatProperty(name='Offset', description='Offset the song (in seconds)'),
                                           0)
         Properties._add_property_to_scene(scene, Properties.EFFECT_ROTATE,
                                           bpy.props.BoolProperty(name="Effect: Rotate", description='Add rotation effect. The terrain is rotated along the \'time\' axis'),
@@ -91,8 +91,8 @@ class Properties:
             Properties._get(scene, Properties.FILE_PATH), Properties._get(scene, Properties.OBJECT_NAME),
             Properties._get(scene, Properties.MESH_NAME), Properties._get(scene, Properties.MATERIAL_COLOR_RAMP_SCALE),
             Properties._get(scene, Properties.TERRAIN_USE_LOG_SCALE), Properties._get(scene, Properties.TERRAIN_WIDTH_MULTIPLIER),
-            Properties._get(scene, Properties.TERRAIN_HEIGHT_MULTIPLIER), Properties._get(scene, Properties.TERRAIN_STEPS),
-            Properties._get(scene, Properties.TERRAIN_STEP_MULTIPLIER), Properties._get(scene, Properties.TERRAIN_STEPS_OFFSET),
+            Properties._get(scene, Properties.TERRAIN_HEIGHT_MULTIPLIER), Properties._get(scene, Properties.SONG_DURATION),
+            Properties._get(scene, Properties.TERRAIN_STEP_MULTIPLIER), Properties._get(scene, Properties.OFFSET),
             Properties._get(scene, Properties.EFFECT_ROTATE), Properties._get(scene, Properties.EFFECT_ROTATE_AMOUNT)
         )
 
@@ -144,9 +144,9 @@ class PropertiesPanel(bpy.types.Panel):
         self.layout.row().prop(context.scene, Properties.TERRAIN_USE_LOG_SCALE)
         self.layout.row().prop(context.scene, Properties.TERRAIN_WIDTH_MULTIPLIER)
         self.layout.row().prop(context.scene, Properties.TERRAIN_HEIGHT_MULTIPLIER)
-        self.layout.row().prop(context.scene, Properties.TERRAIN_STEPS)
         self.layout.row().prop(context.scene, Properties.TERRAIN_STEP_MULTIPLIER)
-        self.layout.row().prop(context.scene, Properties.TERRAIN_STEPS_OFFSET)
+        self.layout.row().prop(context.scene, Properties.SONG_DURATION)
+        self.layout.row().prop(context.scene, Properties.OFFSET)
         self.layout.row().prop(context.scene, Properties.EFFECT_ROTATE)
         self.layout.row().prop(context.scene, Properties.EFFECT_ROTATE_AMOUNT)
 
@@ -156,7 +156,7 @@ class PropertiesPanel(bpy.types.Panel):
 class TerrainGeneratorConfiguration:
 
     def __init__(self, file_path, object_name, mesh_name, material_scale, use_log_scale, width_multiplier,
-                 height_multiplier, steps, step_multiplier, steps_offset, effect_rotate, effect_rotate_amount):
+                 height_multiplier, duration, step_multiplier, offset, effect_rotate, effect_rotate_amount):
         self.file_path = file_path
         self.object_name = object_name
         self.mesh_name = mesh_name
@@ -164,9 +164,9 @@ class TerrainGeneratorConfiguration:
         self.use_log_scale = use_log_scale
         self.width_multiplier = width_multiplier
         self.height_multiplier = height_multiplier
-        self.steps = steps
+        self.duration = duration
+        self.offset = offset
         self.step_multiplier = step_multiplier
-        self.steps_offset = steps_offset
         self.effect_rotate = effect_rotate
         self.effect_rotate_amount = effect_rotate_amount
 
@@ -177,7 +177,7 @@ class TerrainGenerator:
     """
 
     def generate_terrain(self, context, configuration: TerrainGeneratorConfiguration):
-        spectrogram = SoundUtils.get_spectrogram(configuration.file_path)
+        spectrogram = SoundUtils.get_spectrogram(configuration)
         blender_object = Blender.create_blender_object_with_empty_mesh(configuration.object_name,
                                                                        configuration.mesh_name)
         material = MaterialFactory.create_material(configuration.material_scale)
@@ -204,7 +204,7 @@ class TerrainGenerator:
         vertices = []
         for wavelength in range(len(spectrogram)):
             row_vertices = []
-            for time_step in range(configuration.steps if configuration.steps < len(spectrogram[wavelength]) else len(spectrogram[wavelength])):
+            for time_step in range(len(spectrogram[wavelength])):
                 vertex = TerrainGenerator._create_vertex_from_spectrogram_point(wavelength, time_step,
                                                                                 spectrogram[wavelength, time_step],
                                                                                 configuration)
@@ -215,25 +215,19 @@ class TerrainGenerator:
         return vertices
 
     @staticmethod
-    def _create_vertex_from_spectrogram_point(x, y, z, configuration: TerrainGeneratorConfiguration):
-        """
-        :param x: wavelength
-        :param y: time step
-        :param z: amplitude
-        :return:
-        """
+    def _create_vertex_from_spectrogram_point(wavelength, time_step, amplitude, configuration: TerrainGeneratorConfiguration):
         if configuration.use_log_scale:
-            x = (np.log(x) * configuration.width_multiplier) if x > 0 else 0
+            x = (np.log(wavelength) * configuration.width_multiplier) if wavelength > 0 else 0
         else:
-            x = x * configuration.width_multiplier
+            x = wavelength * configuration.width_multiplier
 
-        z = z * configuration.height_multiplier
-        y = y * configuration.step_multiplier
+        y = time_step * configuration.step_multiplier
+        z = amplitude * configuration.height_multiplier
 
         vertex = [x, y, z]
         if configuration.effect_rotate:
             rotation_amount = np.deg2rad(configuration.effect_rotate_amount)
-            vertex = TerrainGenerator._rotate_vertex_around_y(vertex, y * rotation_amount)
+            vertex = TerrainGenerator._rotate_vertex_around_y(vertex, time_step * rotation_amount)
 
         return vertex
 
@@ -332,10 +326,12 @@ class SoundUtils:
     """
 
     @staticmethod
-    def get_spectrogram(song_path):
+    def get_spectrogram(configuration):
         spectrogram = []
         try:
-            waveform, sampling_rate = librosa.load(song_path)
+            duration = configuration.duration if configuration.duration> 0 else None
+            waveform, sampling_rate = librosa.load(configuration.file_path,  duration=duration,
+                                                   offset=configuration.offset)
             spectrogram = librosa.feature.melspectrogram(y=waveform, sr=sampling_rate)
         except Exception as e:
             print("ERROR LOADING SONG")
