@@ -9,29 +9,40 @@ import librosa
 bl_info = {
     'name': 'Music Terrain',
     'author': 'Julius Flimmel',
-    'version': (0, 2, 3),
+    'version': (0, 3, 0),
     'category': 'Add Mesh',
     'description': 'Takes a song and generates an appropriate terrain for it.'
 }
 
 
 def register():
-    bpy.utils.register_class(MusicTo3D)
-    bpy.types.INFO_MT_mesh_add.append(add_terrain_mesh_button)
+    bpy.utils.register_class(GenerationOperator)
+    bpy.utils.register_class(PropertiesPanel)
 
 
 def unregister():
-    bpy.utils.unregister_class(MusicTo3D)
-    bpy.types.INFO_MT_mesh_add.remove(add_terrain_mesh_button)
+    bpy.utils.unregister_class(GenerationOperator)
+    bpy.utils.unregister_class(PropertiesPanel)
 
 
-def add_terrain_mesh_button(self, context):
-    layout = self.layout
-    layout.separator()
-    layout.operator(MusicTo3D.bl_idname, text="Sound Terrain", icon="MOD_SUBSURF")
+def init_addon_properties():
+    Properties.add_property_to_scene(Properties.MUSIC_PATH, bpy.props.StringProperty(name="Path to the music file",
+                                                                                     subtype='FILE_PATH'))
 
 
-class MusicTo3D(bpy.types.Operator):
+class Properties:
+    MUSIC_PATH = 'MusicPath'
+
+    @staticmethod
+    def add_property_to_scene(property_name, property):
+        setattr(bpy.types.Scene, property_name, property)
+
+    @staticmethod
+    def get_property(scene, property_name):
+        return getattr(scene, property_name)
+
+
+class GenerationOperator(bpy.types.Operator):
     """
     The operator that generates terrain based on some music file and according to multiple parameters
     """
@@ -43,11 +54,45 @@ class MusicTo3D(bpy.types.Operator):
     def execute(self, context):
         try:
             generator = TerrainGenerator()
-            generator.generate_terrain(context, 'song.mp3')
+            generator.generate_terrain(context)
         except Exception:
             traceback.print_exc()
 
         return {'FINISHED'}
+
+
+class PropertiesPanel(bpy.types.Panel):
+    """
+    Panel used for user parameterization of the music to 3d operator
+    """
+
+    bl_idname = 'music.terrain.panel'
+    bl_label = 'Music Terrain'
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'TOOLS'
+    bl_category = 'Music Terrain'
+
+    def draw(self, context):
+        row = self.layout.row()
+        row.prop(context.scene, Properties.MUSIC_PATH)
+
+        self.layout.operator(GenerationOperator.bl_idname, text="Generate Terrain")
+
+
+class InitMusicTo3DPanel(bpy.types.Operator):
+    bl_idname = 'music.terrain.panel.init'
+    bl_label = 'Init panel properties'
+
+    def execute(self, context):
+        if not context.scene.initialized:
+            context.scene.initialized = True
+            context.scene.my_prop = "initialized"
+            self.initalize_scene_panel_properties(context.scene)
+        return {'FINISHED'}
+
+    @staticmethod
+    def initialize_scene_panel_properties(scene):
+        scene[Properties.MUSIC_PATH] = 'song.mp3'
 
 
 class TerrainGenerator:
@@ -65,8 +110,8 @@ class TerrainGenerator:
     _TERRAIN_ROTATE = False
     _TERRAIN_ROTATE_AMOUNT = -np.math.pi / 45
 
-    def generate_terrain(self, context, song_path):
-        spectrogram = SoundUtils.get_spectrogram(song_path)
+    def generate_terrain(self, context):
+        spectrogram = SoundUtils.get_spectrogram(Properties.get_property(context.scene, Properties.MUSIC_PATH))
         blender_object = Blender.create_blender_object_with_empty_mesh(TerrainGenerator._OBJECT_NAME,
                                                                        TerrainGenerator._MESH_NAME)
         material = MaterialFactory.create_material(self._MATERIAL_COLOR_RAMP_SCALE)
@@ -444,3 +489,6 @@ class MaterialNodes:
         def __init__(self, material, node):
             super().__init__(material, self.IDENTIFIER, node)
             self.inputs = MaterialNodes.MaterialOutput.Inputs(self._node)
+
+
+init_addon_properties()
