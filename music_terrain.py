@@ -10,7 +10,7 @@ import librosa
 bl_info = {
     'name': 'Music Terrain',
     'author': 'Julius Flimmel',
-    'version': (0, 3, 3),
+    'version': (0, 3, 4),
     'category': 'Add Mesh',
     'description': 'Takes a music file and generates terrain for it based on its spectrogram.'
 }
@@ -262,12 +262,13 @@ class TerrainGenerator:
     @staticmethod
     def _get_neighbour_vertices(vertices: List, x: int, y: int, size: int) -> List:
         neighbours = []
-        half_size = round(size / 2)
+        negative_half_size = round(size / 2)
+        positive_half_size = round(size / 2) if size % 2 == 0 else round(size / 2) + 1
 
-        lower_x = 0 if x - half_size < 0 else x - half_size
-        upper_x = len(vertices) if x + half_size > len(vertices) else x + half_size
-        lower_y = 0 if y - half_size < 0 else y - half_size
-        upper_y = len(vertices[0]) if y + half_size > len(vertices[0]) else y + half_size
+        lower_x = 0 if x - negative_half_size < 0 else x - negative_half_size
+        upper_x = len(vertices) if x + positive_half_size > len(vertices) else x + positive_half_size
+        lower_y = 0 if y - negative_half_size < 0 else y - negative_half_size
+        upper_y = len(vertices[0]) if y + positive_half_size > len(vertices[0]) else y + positive_half_size
 
         for neighbour_x in range(lower_x, upper_x):
             for neighbour_y in range(lower_y, upper_y):
