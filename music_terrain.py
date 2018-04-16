@@ -10,7 +10,7 @@ import librosa
 bl_info = {
     'name': 'Music Terrain',
     'author': 'Julius Flimmel',
-    'version': (0, 3, 4),
+    'version': (0, 3, 5),
     'category': 'Add Mesh',
     'description': 'Takes a music file and generates terrain for it based on its spectrogram.'
 }
@@ -57,6 +57,9 @@ class Properties:
     EFFECT_SMOOTH = 'EffectSmooth'
     EFFECT_SMOOTH_AMOUNT = 'EffectSmoothAmount'
 
+    EFFECT_DETAILED_SMOOTHING = 'EffectCombinedSmoothing'
+    EFFECT_DETAILED_SMOOTHING_DEPTH = 'EffectCombinedSmoothingDepth'
+
     _PROPERTIES = [
         Property(FILE_PATH,
                  bpy.props.StringProperty(name="File path", description='Path to the music file', subtype='FILE_PATH', default='./song.mp3')),
@@ -69,9 +72,9 @@ class Properties:
         Property(TERRAIN_USE_LOG_SCALE,
                  bpy.props.BoolProperty(name="LogScale", description='Use logscale for the wave axis?', default=True)),
         Property(TERRAIN_WIDTH_MULTIPLIER,
-                 bpy.props.FloatProperty(name="Width multiplier", subtype='UNSIGNED', default=3.0)),
+                 bpy.props.FloatProperty(name='Width multiplier', subtype='UNSIGNED', default=3.0)),
         Property(TERRAIN_HEIGHT_MULTIPLIER,
-                 bpy.props.FloatProperty(name="Height multiplier", subtype='UNSIGNED', default=0.2)),
+                 bpy.props.FloatProperty(name='Height multiplier', subtype='UNSIGNED', default=0.2)),
         Property(TERRAIN_STEP_MULTIPLIER,
                  bpy.props.FloatProperty(name='Step multiplier', subtype='UNSIGNED', default=0.5)),
         Property(SONG_DURATION,
@@ -79,13 +82,17 @@ class Properties:
         Property(OFFSET,
                  bpy.props.FloatProperty(name='Offset', description='Offset the song (in seconds)', subtype='UNSIGNED', default=0)),
         Property(EFFECT_SMOOTH,
-                 bpy.props.BoolProperty(name='Effect: Smoothing', description='Effect that turns on smoothing', default=True)),
+                 bpy.props.BoolProperty(name='Effect: Smoothing', description='Effect that turns on smoothing', default=False)),
         Property(EFFECT_SMOOTH_AMOUNT,
                  bpy.props.IntProperty(name='Effect: Smoothing amount', description='Amount of smoothing (higher number results in smoother terrain', subtype='UNSIGNED', default=3)),
         Property(EFFECT_ROTATE,
                  bpy.props.BoolProperty(name="Effect: Rotate", description='Add rotation effect. The terrain is rotated along the \'time\' axis', default=False)),
         Property(EFFECT_ROTATE_AMOUNT,
-                 bpy.props.FloatProperty(name="Effect: Rotate amount", description='Degrees to rotate by in each step', default=3.0)),
+                 bpy.props.FloatProperty(name='Effect: Rotate amount', description='Degrees to rotate by in each step', default=3.0)),
+        Property(EFFECT_DETAILED_SMOOTHING,
+                 bpy.props.BoolProperty(name='Effect: Detailed smoothing', description='Smoothing which takes multiple smooth levels and averages them', default=True)),
+        Property(EFFECT_DETAILED_SMOOTHING_DEPTH,
+                 bpy.props.IntProperty(name='Effect: Detailed smoothing depth', description='Number of smoothing levels to compute', subtype='UNSIGNED', default=3))
     ]
 
     @staticmethod
@@ -102,7 +109,8 @@ class Properties:
             Properties._get(scene, Properties.TERRAIN_HEIGHT_MULTIPLIER), Properties._get(scene, Properties.SONG_DURATION),
             Properties._get(scene, Properties.TERRAIN_STEP_MULTIPLIER), Properties._get(scene, Properties.OFFSET),
             Properties._get(scene, Properties.EFFECT_ROTATE), Properties._get(scene, Properties.EFFECT_ROTATE_AMOUNT),
-            Properties._get(scene, Properties.EFFECT_SMOOTH), Properties._get(scene, Properties.EFFECT_SMOOTH_AMOUNT)
+            Properties._get(scene, Properties.EFFECT_SMOOTH), Properties._get(scene, Properties.EFFECT_SMOOTH_AMOUNT),
+            Properties._get(scene, Properties.EFFECT_DETAILED_SMOOTHING), Properties._get(scene, Properties.EFFECT_DETAILED_SMOOTHING_DEPTH)
         )
 
     @staticmethod
@@ -159,6 +167,8 @@ class PropertiesPanel(bpy.types.Panel):
         self.layout.row().prop(context.scene, Properties.EFFECT_ROTATE_AMOUNT)
         self.layout.row().prop(context.scene, Properties.EFFECT_SMOOTH)
         self.layout.row().prop(context.scene, Properties.EFFECT_SMOOTH_AMOUNT)
+        self.layout.row().prop(context.scene, Properties.EFFECT_DETAILED_SMOOTHING)
+        self.layout.row().prop(context.scene, Properties.EFFECT_DETAILED_SMOOTHING_DEPTH)
 
         self.layout.operator(GenerationOperator.bl_idname, text="Generate Terrain")
 
@@ -167,7 +177,7 @@ class TerrainGeneratorConfiguration:
 
     def __init__(self, file_path, object_name, mesh_name, material_scale, use_log_scale, width_multiplier,
                  height_multiplier, duration, step_multiplier, offset, effect_rotate, effect_rotate_amount, smoothing,
-                 smoothing_amount):
+                 smoothing_amount, detailed_smoothing, detailed_smoothing_depth):
         self.file_path = file_path
         self.object_name = object_name
         self.mesh_name = mesh_name
@@ -182,6 +192,8 @@ class TerrainGeneratorConfiguration:
         self.effect_rotate_amount = effect_rotate_amount
         self.smoothing = smoothing
         self.smoothing_amount = smoothing_amount
+        self.detailed_smoothing = detailed_smoothing
+        self.detailed_smoothing_depth = detailed_smoothing_depth
 
 
 class TerrainGenerator:
@@ -225,7 +237,9 @@ class TerrainGenerator:
 
             vertices.append(row_vertices)
 
-        if configuration.smoothing:
+        if configuration.detailed_smoothing:
+            vertices = TerrainGenerator._detailed_smooth_vertices(vertices, configuration.detailed_smoothing_depth)
+        elif configuration.smoothing:
             vertices = TerrainGenerator._smooth_vertices(vertices, configuration.smoothing_amount)
 
         return vertices
@@ -248,12 +262,29 @@ class TerrainGenerator:
         return vertex
 
     @staticmethod
-    def _smooth_vertices(vertices: List, smoothing_size):
+    def _detailed_smooth_vertices(vertices: List, levels: int):
+        print("START SMOOTHING: " + str(levels))
         for x in range(len(vertices)):
             for y in range(len(vertices[0])):
+                height_sum = 0
+                for level in range(1, levels + 1):
+                    # TODO: extract this to a function
+                    neighbour_vertices = TerrainGenerator._get_neighbour_vertices(vertices, x, y, level)
+                    height_sum += Utils.reduce(lambda vertex, acc: vertex.co[2] + acc, neighbour_vertices) / len(neighbour_vertices)
+
                 smoothed_vertex = vertices[x][y]
+                smoothed_vertex.co[2] = height_sum / levels
+
+        # TODO: so... do we need to return it??
+        return vertices
+
+    @staticmethod
+    def _smooth_vertices(vertices: List, smoothing_size: int):
+        for x in range(len(vertices)):
+            for y in range(len(vertices[0])):
                 neighbour_vertices = TerrainGenerator._get_neighbour_vertices(vertices, x, y, smoothing_size)
                 height_sum = Utils.reduce(lambda vertex, acc: vertex.co[2] + acc, neighbour_vertices)
+                smoothed_vertex = vertices[x][y]
                 smoothed_vertex.co[2] = height_sum / len(neighbour_vertices)
 
         # TODO: so... do we need to return it??
