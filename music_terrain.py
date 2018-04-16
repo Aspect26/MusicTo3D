@@ -19,7 +19,7 @@ bl_info = {
 def register():
     bpy.utils.register_class(GenerationOperator)
     bpy.utils.register_class(PropertiesPanel)
-    Properties.add_to_scene(bpy.context.scene)
+    Properties.create()
 
 
 def unregister():
@@ -31,6 +31,12 @@ class Properties:
     """
     Specifies global properties that are used to parameterize the terrain generation
     """
+
+    class Property:
+
+        def __init__(self, identifier, blender_property):
+            self.identifier = identifier
+            self.blender_property = blender_property
 
     FILE_PATH = 'FilePath'
     OBJECT_NAME = 'ObjectName'
@@ -51,50 +57,41 @@ class Properties:
     EFFECT_SMOOTH = 'EffectSmooth'
     EFFECT_SMOOTH_AMOUNT = 'EffectSmoothAmount'
 
+    _PROPERTIES = [
+        Property(FILE_PATH,
+                 bpy.props.StringProperty(name="File path", description='Path to the music file', subtype='FILE_PATH', default='./song.mp3')),
+        Property(OBJECT_NAME,
+                 bpy.props.StringProperty(name="Object name", description='Name of the object that will be generated', default='Music Terrain')),
+        Property(MESH_NAME,
+                 bpy.props.StringProperty(name="Mesh name", description='Name of the mesh component of the generated object', default='Spectrogram Mesh')),
+        Property(MATERIAL_COLOR_RAMP_SCALE,
+                 bpy.props.FloatProperty(name="Material height scale", description='Multiplier for the material color change steps height', subtype='UNSIGNED', default=9.0)),
+        Property(TERRAIN_USE_LOG_SCALE,
+                 bpy.props.BoolProperty(name="LogScale", description='Use logscale for the wave axis?', default=True)),
+        Property(TERRAIN_WIDTH_MULTIPLIER,
+                 bpy.props.FloatProperty(name="Width multiplier", subtype='UNSIGNED', default=3.0)),
+        Property(TERRAIN_HEIGHT_MULTIPLIER,
+                 bpy.props.FloatProperty(name="Height multiplier", subtype='UNSIGNED', default=0.2)),
+        Property(TERRAIN_STEP_MULTIPLIER,
+                 bpy.props.FloatProperty(name='Step multiplier', subtype='UNSIGNED', default=0.5)),
+        Property(SONG_DURATION,
+                 bpy.props.FloatProperty(name='Duration', description='Duration of the sampled song (in seconds). Zero to load whole song', default=2.0)),
+        Property(OFFSET,
+                 bpy.props.FloatProperty(name='Offset', description='Offset the song (in seconds)', subtype='UNSIGNED', default=0)),
+        Property(EFFECT_SMOOTH,
+                 bpy.props.BoolProperty(name='Effect: Smoothing', description='Effect that turns on smoothing', default=True)),
+        Property(EFFECT_SMOOTH_AMOUNT,
+                 bpy.props.IntProperty(name='Effect: Smoothing amount', description='Amount of smoothing (higher number results in smoother terrain', subtype='UNSIGNED', default=3)),
+        Property(EFFECT_ROTATE,
+                 bpy.props.BoolProperty(name="Effect: Rotate", description='Add rotation effect. The terrain is rotated along the \'time\' axis', default=False)),
+        Property(EFFECT_ROTATE_AMOUNT,
+                 bpy.props.FloatProperty(name="Effect: Rotate amount", description='Degrees to rotate by in each step', default=3.0)),
+    ]
+
     @staticmethod
-    def add_to_scene(scene):
-        Properties._add_property_to_scene(scene, Properties.FILE_PATH,
-                                          bpy.props.StringProperty(name="File path", description='Path to the music file', subtype='FILE_PATH'),
-                                          './song.mp3')
-        Properties._add_property_to_scene(scene, Properties.OBJECT_NAME,
-                                          bpy.props.StringProperty(name="Object name", description='Name of the object that will be generated'),
-                                          'Music Terrain')
-        Properties._add_property_to_scene(scene, Properties.MESH_NAME,
-                                          bpy.props.StringProperty(name="Mesh name", description='Name of the mesh component of the generated object'),
-                                          'Spectrogram Mesh')
-        Properties._add_property_to_scene(scene, Properties.MATERIAL_COLOR_RAMP_SCALE,
-                                          bpy.props.FloatProperty(name="Material height scale", description='Multiplier for the material color change steps height', subtype='UNSIGNED'),
-                                          9.0)
-        Properties._add_property_to_scene(scene, Properties.TERRAIN_USE_LOG_SCALE,
-                                          bpy.props.BoolProperty(name="LogScale", description='Use logscale for the wave axis?'),
-                                          True)
-        Properties._add_property_to_scene(scene, Properties.TERRAIN_WIDTH_MULTIPLIER,
-                                          bpy.props.FloatProperty(name="Width multiplier", subtype='UNSIGNED'),
-                                          3.0)
-        Properties._add_property_to_scene(scene, Properties.TERRAIN_HEIGHT_MULTIPLIER,
-                                          bpy.props.FloatProperty(name="Height multiplier", subtype='UNSIGNED'),
-                                          0.2)
-        Properties._add_property_to_scene(scene, Properties.TERRAIN_STEP_MULTIPLIER,
-                                          bpy.props.FloatProperty(name='Step multiplier', subtype='UNSIGNED'),
-                                          0.5)
-        Properties._add_property_to_scene(scene, Properties.SONG_DURATION,
-                                          bpy.props.FloatProperty(name='Duration', description='Duration of the sampled song (in seconds). Zero to load whole song'),
-                                          2.0)
-        Properties._add_property_to_scene(scene, Properties.OFFSET,
-                                          bpy.props.FloatProperty(name='Offset', description='Offset the song (in seconds)', subtype='UNSIGNED'),
-                                          0)
-        Properties._add_property_to_scene(scene, Properties.EFFECT_SMOOTH,
-                                          bpy.props.BoolProperty(name='Effect: Smoothing', description='Effect that turns on smoothing'),
-                                          True)
-        Properties._add_property_to_scene(scene, Properties.EFFECT_SMOOTH_AMOUNT,
-                                          bpy.props.IntProperty(name='Effect: Smoothing amount', description='Amount of smoothing (higher number results in smoother terrain', subtype='UNSIGNED'),
-                                          3)
-        Properties._add_property_to_scene(scene, Properties.EFFECT_ROTATE,
-                                          bpy.props.BoolProperty(name="Effect: Rotate", description='Add rotation effect. The terrain is rotated along the \'time\' axis'),
-                                          False)
-        Properties._add_property_to_scene(scene, Properties.EFFECT_ROTATE_AMOUNT,
-                                          bpy.props.FloatProperty(name="Effect: Rotate amount", description='Degrees to rotate by in each step'),
-                                          3.0)
+    def create():
+        for prop in Properties._PROPERTIES:
+            Properties._create_property(prop)
 
     @staticmethod
     def get_all(scene):
@@ -109,9 +106,8 @@ class Properties:
         )
 
     @staticmethod
-    def _add_property_to_scene(scene, property_identifier, property_value, default_value):
-        setattr(bpy.types.Scene, property_identifier, property_value)
-        scene[property_identifier] = default_value
+    def _create_property(property: Property):
+        setattr(bpy.types.Scene, property.identifier, property.blender_property)
 
     @staticmethod
     def _get(scene, property_name):
@@ -161,7 +157,8 @@ class PropertiesPanel(bpy.types.Panel):
         self.layout.row().prop(context.scene, Properties.OFFSET)
         self.layout.row().prop(context.scene, Properties.EFFECT_ROTATE)
         self.layout.row().prop(context.scene, Properties.EFFECT_ROTATE_AMOUNT)
-        self.layout.row()
+        self.layout.row().prop(context.scene, Properties.EFFECT_SMOOTH)
+        self.layout.row().prop(context.scene, Properties.EFFECT_SMOOTH_AMOUNT)
 
         self.layout.operator(GenerationOperator.bl_idname, text="Generate Terrain")
 
@@ -229,7 +226,7 @@ class TerrainGenerator:
             vertices.append(row_vertices)
 
         if configuration.smoothing:
-            vertices = TerrainGenerator._smooth_vertices(vertices)
+            vertices = TerrainGenerator._smooth_vertices(vertices, configuration.smoothing_amount)
 
         return vertices
 
@@ -258,6 +255,9 @@ class TerrainGenerator:
                 neighbour_vertices = TerrainGenerator._get_neighbour_vertices(vertices, x, y, smoothing_size)
                 height_sum = Utils.reduce(lambda vertex, acc: vertex.co[2] + acc, neighbour_vertices)
                 smoothed_vertex.co[2] = height_sum / len(neighbour_vertices)
+
+        # TODO: so... do we need to return it??
+        return vertices
 
     @staticmethod
     def _get_neighbour_vertices(vertices: List, x: int, y: int, size: int) -> List:
