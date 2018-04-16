@@ -1,4 +1,5 @@
 import traceback
+from typing import List
 
 import numpy as np
 
@@ -9,7 +10,7 @@ import librosa
 bl_info = {
     'name': 'Music Terrain',
     'author': 'Julius Flimmel',
-    'version': (0, 3, 2),
+    'version': (0, 3, 3),
     'category': 'Add Mesh',
     'description': 'Takes a music file and generates terrain for it based on its spectrogram.'
 }
@@ -18,6 +19,7 @@ bl_info = {
 def register():
     bpy.utils.register_class(GenerationOperator)
     bpy.utils.register_class(PropertiesPanel)
+    Properties.add_to_scene(bpy.context.scene)
 
 
 def unregister():
@@ -46,6 +48,9 @@ class Properties:
     EFFECT_ROTATE = 'EffectRotate'
     EFFECT_ROTATE_AMOUNT = 'EffectRotateAmount'
 
+    EFFECT_SMOOTH = 'EffectSmooth'
+    EFFECT_SMOOTH_AMOUNT = 'EffectSmoothAmount'
+
     @staticmethod
     def add_to_scene(scene):
         Properties._add_property_to_scene(scene, Properties.FILE_PATH,
@@ -58,32 +63,38 @@ class Properties:
                                           bpy.props.StringProperty(name="Mesh name", description='Name of the mesh component of the generated object'),
                                           'Spectrogram Mesh')
         Properties._add_property_to_scene(scene, Properties.MATERIAL_COLOR_RAMP_SCALE,
-                                          bpy.props.FloatProperty(name="Material height scale", description='Multiplier for the material color change steps height'),
+                                          bpy.props.FloatProperty(name="Material height scale", description='Multiplier for the material color change steps height', subtype='UNSIGNED'),
                                           9.0)
         Properties._add_property_to_scene(scene, Properties.TERRAIN_USE_LOG_SCALE,
                                           bpy.props.BoolProperty(name="LogScale", description='Use logscale for the wave axis?'),
                                           True)
         Properties._add_property_to_scene(scene, Properties.TERRAIN_WIDTH_MULTIPLIER,
-                                          bpy.props.FloatProperty(name="Width multiplier"),
+                                          bpy.props.FloatProperty(name="Width multiplier", subtype='UNSIGNED'),
                                           3.0)
         Properties._add_property_to_scene(scene, Properties.TERRAIN_HEIGHT_MULTIPLIER,
-                                          bpy.props.FloatProperty(name="Height multiplier"),
+                                          bpy.props.FloatProperty(name="Height multiplier", subtype='UNSIGNED'),
                                           0.2)
         Properties._add_property_to_scene(scene, Properties.TERRAIN_STEP_MULTIPLIER,
-                                          bpy.props.FloatProperty(name='Step multiplier'),
+                                          bpy.props.FloatProperty(name='Step multiplier', subtype='UNSIGNED'),
                                           0.5)
         Properties._add_property_to_scene(scene, Properties.SONG_DURATION,
                                           bpy.props.FloatProperty(name='Duration', description='Duration of the sampled song (in seconds). Zero to load whole song'),
                                           2.0)
         Properties._add_property_to_scene(scene, Properties.OFFSET,
-                                          bpy.props.FloatProperty(name='Offset', description='Offset the song (in seconds)'),
+                                          bpy.props.FloatProperty(name='Offset', description='Offset the song (in seconds)', subtype='UNSIGNED'),
                                           0)
+        Properties._add_property_to_scene(scene, Properties.EFFECT_SMOOTH,
+                                          bpy.props.BoolProperty(name='Effect: Smoothing', description='Effect that turns on smoothing'),
+                                          True)
+        Properties._add_property_to_scene(scene, Properties.EFFECT_SMOOTH_AMOUNT,
+                                          bpy.props.IntProperty(name='Effect: Smoothing amount', description='Amount of smoothing (higher number results in smoother terrain', subtype='UNSIGNED'),
+                                          3)
         Properties._add_property_to_scene(scene, Properties.EFFECT_ROTATE,
                                           bpy.props.BoolProperty(name="Effect: Rotate", description='Add rotation effect. The terrain is rotated along the \'time\' axis'),
                                           False)
         Properties._add_property_to_scene(scene, Properties.EFFECT_ROTATE_AMOUNT,
-                                          bpy.props.FloatProperty(name="Effect: rotate - amount", description='Degrees to rotate by in each step'),
-                                          3)
+                                          bpy.props.FloatProperty(name="Effect: Rotate amount", description='Degrees to rotate by in each step'),
+                                          3.0)
 
     @staticmethod
     def get_all(scene):
@@ -93,7 +104,8 @@ class Properties:
             Properties._get(scene, Properties.TERRAIN_USE_LOG_SCALE), Properties._get(scene, Properties.TERRAIN_WIDTH_MULTIPLIER),
             Properties._get(scene, Properties.TERRAIN_HEIGHT_MULTIPLIER), Properties._get(scene, Properties.SONG_DURATION),
             Properties._get(scene, Properties.TERRAIN_STEP_MULTIPLIER), Properties._get(scene, Properties.OFFSET),
-            Properties._get(scene, Properties.EFFECT_ROTATE), Properties._get(scene, Properties.EFFECT_ROTATE_AMOUNT)
+            Properties._get(scene, Properties.EFFECT_ROTATE), Properties._get(scene, Properties.EFFECT_ROTATE_AMOUNT),
+            Properties._get(scene, Properties.EFFECT_SMOOTH), Properties._get(scene, Properties.EFFECT_SMOOTH_AMOUNT)
         )
 
     @staticmethod
@@ -149,6 +161,7 @@ class PropertiesPanel(bpy.types.Panel):
         self.layout.row().prop(context.scene, Properties.OFFSET)
         self.layout.row().prop(context.scene, Properties.EFFECT_ROTATE)
         self.layout.row().prop(context.scene, Properties.EFFECT_ROTATE_AMOUNT)
+        self.layout.row()
 
         self.layout.operator(GenerationOperator.bl_idname, text="Generate Terrain")
 
@@ -156,7 +169,8 @@ class PropertiesPanel(bpy.types.Panel):
 class TerrainGeneratorConfiguration:
 
     def __init__(self, file_path, object_name, mesh_name, material_scale, use_log_scale, width_multiplier,
-                 height_multiplier, duration, step_multiplier, offset, effect_rotate, effect_rotate_amount):
+                 height_multiplier, duration, step_multiplier, offset, effect_rotate, effect_rotate_amount, smoothing,
+                 smoothing_amount):
         self.file_path = file_path
         self.object_name = object_name
         self.mesh_name = mesh_name
@@ -169,6 +183,8 @@ class TerrainGeneratorConfiguration:
         self.step_multiplier = step_multiplier
         self.effect_rotate = effect_rotate
         self.effect_rotate_amount = effect_rotate_amount
+        self.smoothing = smoothing
+        self.smoothing_amount = smoothing_amount
 
 
 class TerrainGenerator:
@@ -212,6 +228,9 @@ class TerrainGenerator:
 
             vertices.append(row_vertices)
 
+        if configuration.smoothing:
+            vertices = TerrainGenerator._smooth_vertices(vertices)
+
         return vertices
 
     @staticmethod
@@ -230,6 +249,31 @@ class TerrainGenerator:
             vertex = TerrainGenerator._rotate_vertex_around_y(vertex, time_step * rotation_amount)
 
         return vertex
+
+    @staticmethod
+    def _smooth_vertices(vertices: List, smoothing_size):
+        for x in range(len(vertices)):
+            for y in range(len(vertices[0])):
+                smoothed_vertex = vertices[x][y]
+                neighbour_vertices = TerrainGenerator._get_neighbour_vertices(vertices, x, y, smoothing_size)
+                height_sum = Utils.reduce(lambda vertex, acc: vertex.co[2] + acc, neighbour_vertices)
+                smoothed_vertex.co[2] = height_sum / len(neighbour_vertices)
+
+    @staticmethod
+    def _get_neighbour_vertices(vertices: List, x: int, y: int, size: int) -> List:
+        neighbours = []
+        half_size = round(size / 2)
+
+        lower_x = 0 if x - half_size < 0 else x - half_size
+        upper_x = len(vertices) if x + half_size > len(vertices) else x + half_size
+        lower_y = 0 if y - half_size < 0 else y - half_size
+        upper_y = len(vertices[0]) if y + half_size > len(vertices[0]) else y + half_size
+
+        for neighbour_x in range(lower_x, upper_x):
+            for neighbour_y in range(lower_y, upper_y):
+                neighbours.append(vertices[neighbour_x][neighbour_y])
+
+        return neighbours
 
     @staticmethod
     def _rotate_vertex_around_y(vertex, angle):
@@ -558,4 +602,12 @@ class MaterialNodes:
             self.inputs = MaterialNodes.MaterialOutput.Inputs(self._node)
 
 
-Properties.add_to_scene(bpy.context.scene)
+class Utils:
+
+    @staticmethod
+    def reduce(reduce_function, iterable, start=0):
+        result = start
+        for x in iterable:
+            result = reduce_function(x, result)
+
+        return result
