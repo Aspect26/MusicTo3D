@@ -10,7 +10,7 @@ import librosa
 bl_info = {
     'name': 'Music Terrain',
     'author': 'Julius Flimmel',
-    'version': (0, 4, 0),
+    'version': (0, 4, 1),
     'category': 'Add Mesh',
     'description': 'Takes a music file and generates terrain for it based on its spectrogram.'
 }
@@ -135,7 +135,7 @@ class GenerationOperator(bpy.types.Operator):
         try:
             TerrainGenerator().generate(context, Properties.get_all(context.scene))
             player = PlayerGenerator().generate(context)
-            Camera().update(player)
+            Camera().update(player, Properties.get_all(context.scene).file_path)
         except Exception:
             traceback.print_exc()
 
@@ -387,7 +387,7 @@ def playerLogic():
     player = controller.owner
     keyboard = bge.logic.keyboard
     
-    forward_movement = 0.1
+    forward_movement = 0.3
     left_movement = 0
     right_movement = 0
     
@@ -423,11 +423,15 @@ class Camera:
     def __init__(self):
         self._camera = None
         self._player_object = None
+        self._sound_file_path = None
 
-    def update(self, player_object):
+    def update(self, player_object, sound_file_path):
         self._player_object = player_object
+        self._sound_file_path = sound_file_path
+
         self._get_camera()
         self._create_camera_logic()
+        self._create_camera_sound()
 
     def _get_camera(self):
         self._camera = bpy.data.objects['Camera']
@@ -439,11 +443,18 @@ class Camera:
     def _create_camera_logic(self):
         sensor = Blender.create_always_sensor(self._camera)
         controller = Blender.create_and_controller(self._camera)
-        actuator = self._create_actuator()
+        actuator = self._create_logic_actuator()
 
         controller.link(sensor, actuator)
 
-    def _create_actuator(self):
+    def _create_camera_sound(self):
+        sensor = Blender.create_startup_sensor(self._camera)
+        controller = Blender.create_and_controller(self._camera)
+        actuator = self._create_sound_actuator()
+
+        controller.link(sensor, actuator)
+
+    def _create_logic_actuator(self):
         actuator = Blender.create_camera_actuator(self._camera)
         actuator.axis = 'POS_X'
         actuator.height = self._HEIGHT
@@ -451,6 +462,12 @@ class Camera:
         actuator.max = self._MAX_DISTANCE
         actuator.damping = self._DAMPING
         actuator.object = self._player_object
+
+        return actuator
+
+    def _create_sound_actuator(self):
+        actuator = Blender.create_sound_actuator(self._camera)
+        actuator.sound = Blender.create_sound(self._sound_file_path)
 
         return actuator
 
@@ -602,6 +619,11 @@ class Blender:
         return obj.game.sensors[-1]
 
     @staticmethod
+    def create_startup_sensor(obj, name='sensor'):
+        bpy.ops.logic.sensor_add(type='DELAY', name=name, object=obj.name)
+        return obj.game.sensors[-1]
+
+    @staticmethod
     def create_and_controller(obj, name='controller'):
         bpy.ops.logic.controller_add(type='LOGIC_AND', name=name, object=obj.name)
         return obj.game.controllers[-1]
@@ -610,6 +632,15 @@ class Blender:
     def create_camera_actuator(obj, name='actuator'):
         bpy.ops.logic.actuator_add(type='CAMERA', name=name, object=obj.name)
         return obj.game.actuators[-1]
+
+    @staticmethod
+    def create_sound_actuator(obj, name='actuator'):
+        bpy.ops.logic.actuator_add(type='SOUND', name=name, object=obj.name)
+        return obj.game.actuators[-1]
+
+    @staticmethod
+    def create_sound(file_path):
+        return bpy.data.sounds.load(file_path, check_existing=True)
 
 
 class NodeOutputs:
