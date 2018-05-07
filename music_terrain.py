@@ -10,7 +10,7 @@ import librosa
 bl_info = {
     'name': 'Music Terrain',
     'author': 'Julius Flimmel',
-    'version': (0, 3, 5),
+    'version': (0, 4, 0),
     'category': 'Add Mesh',
     'description': 'Takes a music file and generates terrain for it based on its spectrogram.'
 }
@@ -133,8 +133,9 @@ class GenerationOperator(bpy.types.Operator):
 
     def execute(self, context):
         try:
-            generator = TerrainGenerator()
-            generator.generate_terrain(context, Properties.get_all(context.scene))
+            TerrainGenerator().generate(context, Properties.get_all(context.scene))
+            player = PlayerGenerator().generate(context)
+            Camera().update(player)
         except Exception:
             traceback.print_exc()
 
@@ -201,7 +202,7 @@ class TerrainGenerator:
     Class which takes care of terrain generation
     """
 
-    def generate_terrain(self, context, configuration: TerrainGeneratorConfiguration):
+    def generate(self, context, configuration: TerrainGeneratorConfiguration):
         spectrogram = SoundUtils.get_spectrogram(configuration)
         blender_object = Blender.create_blender_object_with_empty_mesh(configuration.object_name,
                                                                        configuration.mesh_name)
@@ -263,7 +264,6 @@ class TerrainGenerator:
 
     @staticmethod
     def _detailed_smooth_vertices(vertices: List, levels: int):
-        print("START SMOOTHING: " + str(levels))
         for x in range(len(vertices)):
             for y in range(len(vertices[0])):
                 height_sum = 0
@@ -327,10 +327,142 @@ class TerrainGenerator:
     def _create_terrain_faces(bm, vertices):
         for wavelength in range(len(vertices) - 1):
             for time_step in range(len(vertices[wavelength]) - 1):
-                bm.faces.new((vertices[wavelength][time_step], vertices[wavelength][time_step + 1],
-                             vertices[wavelength + 1][time_step]))
-                bm.faces.new((vertices[wavelength][time_step + 1], vertices[wavelength + 1][time_step + 1],
-                             vertices[wavelength + 1][time_step]))
+                bm.faces.new((vertices[wavelength][time_step], vertices[wavelength + 1][time_step],
+                             vertices[wavelength][time_step + 1]))
+                bm.faces.new((vertices[wavelength][time_step + 1], vertices[wavelength + 1][time_step],
+                             vertices[wavelength + 1][time_step + 1]))
+
+
+class PlayerGenerator:
+
+    def __init__(self):
+        self._player_object = None
+
+    def generate(self, context):
+        self._create_player()
+        self._create_player_logic()
+
+        return self._player_object
+
+    def _create_player(self):
+        scene = bpy.context.scene
+        mesh = bpy.data.meshes.new('Basic_Sphere')
+        self._player_object = bpy.data.objects.new("Player", mesh)
+        scene.objects.link(self._player_object)
+        self._player_object.location = (6.0, 3.0, 1.0)
+
+        bm = bmesh.new()
+        bmesh.ops.create_uvsphere(bm, u_segments=32, v_segments=16, diameter=0.5)
+        bm.to_mesh(mesh)
+        bm.free()
+
+    def _create_player_logic(self):
+        sensor = self._create_always_sensor()
+        controller = self._create_logic_controller()
+        sensor.link(controller)
+
+    def _create_always_sensor(self):
+        sensor = Blender.create_always_sensor(self._player_object)
+        sensor.use_pulse_true_level = True
+
+        return sensor
+
+    def _create_logic_controller(self):
+        bpy.ops.logic.controller_add(type='PYTHON', name='logic_controller', object=self._player_object.name)
+        controller = self._player_object.game.controllers[-1]
+        controller.text = self._create_logic_controller_script()
+
+        return controller
+
+    def _create_logic_controller_script(self):
+        script = bpy.data.texts.new('test.py')
+        # TODO: consider adding this to a separate file...
+        script.from_string(
+"""
+import bge
+
+def playerLogic():
+    
+    controller = bge.logic.getCurrentController();
+    player = controller.owner
+    keyboard = bge.logic.keyboard
+    
+    forward_movement = 0.1
+    left_movement = 0
+    right_movement = 0
+    
+    aKey = bge.logic.KX_INPUT_ACTIVE == keyboard.events[bge.events.AKEY]
+    dKey = bge.logic.KX_INPUT_ACTIVE == keyboard.events[bge.events.DKEY]
+    spaceKey = bge.logic.KX_INPUT_JUST_ACTIVATED == keyboard.events[bge.events.SPACEKEY]
+    
+    side_movement = 0.0
+    jump = 0.0
+    if aKey:
+        side_movement += -0.05
+    if dKey:
+        side_movement += 0.05
+    if spaceKey:
+        jump += 0.15
+    
+    player.applyMovement((side_movement, forward_movement, 0.0), True)
+    # player.applyRotation((-0.05, 0.0, 0.0), True)
+    
+playerLogic()
+"""
+        )
+        return script
+
+
+class Camera:
+
+    _HEIGHT = 5.0
+    _MIN_DISTANCE = 10.0
+    _MAX_DISTANCE = 15.0
+    _DAMPING = 0.03
+
+    def __init__(self):
+        self._camera = None
+        self._player_object = None
+
+    def update(self, player_object):
+        self._player_object = player_object
+        self._get_camera()
+        self._create_camera_logic()
+
+    def _get_camera(self):
+        self._camera = bpy.data.objects['Camera']
+        if self._camera is None:
+            self._create_new_camera()
+        else:
+            self._reset_camera()
+
+    def _create_camera_logic(self):
+        sensor = Blender.create_always_sensor(self._camera)
+        controller = Blender.create_and_controller(self._camera)
+        actuator = self._create_actuator()
+
+        controller.link(sensor, actuator)
+
+    def _create_actuator(self):
+        actuator = Blender.create_camera_actuator(self._camera)
+        actuator.axis = 'POS_X'
+        actuator.height = self._HEIGHT
+        actuator.min = self._MIN_DISTANCE
+        actuator.max = self._MAX_DISTANCE
+        actuator.damping = self._DAMPING
+        actuator.object = self._player_object
+
+        return actuator
+
+    def _create_new_camera(self):
+        # TODO: implement me
+        raise Exception("Creating a new camera object is not implemented, yet. Please do not remove the default camera for now")
+
+    def _reset_camera(self):
+        # TODO: these clears doesn't work
+        self._camera.game.sensors.items().clear()
+        self._camera.game.controllers.items().clear()
+        self._camera.game.actuators.items().clear()
 
 
 class ColorRampElement:
@@ -463,6 +595,21 @@ class Blender:
     @staticmethod
     def find_node_in_material(material, node_identifier):
         return material.node_tree.nodes.get(node_identifier)
+
+    @staticmethod
+    def create_always_sensor(obj, name='sensor'):
+        bpy.ops.logic.sensor_add(type='ALWAYS', name=name, object=obj.name)
+        return obj.game.sensors[-1]
+
+    @staticmethod
+    def create_and_controller(obj, name='controller'):
+        bpy.ops.logic.controller_add(type='LOGIC_AND', name=name, object=obj.name)
+        return obj.game.controllers[-1]
+
+    @staticmethod
+    def create_camera_actuator(obj, name='actuator'):
+        bpy.ops.logic.actuator_add(type='CAMERA', name=name, object=obj.name)
+        return obj.game.actuators[-1]
 
 
 class NodeOutputs:
