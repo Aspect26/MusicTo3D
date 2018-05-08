@@ -11,9 +11,9 @@ from mathutils import Euler
 bl_info = {
     'name': 'Music Terrain',
     'author': 'Julius Flimmel',
-    'version': (0, 4, 4),
+    'version': (0, 4, 5),
     'category': 'Game Engine',
-    'description': 'Takes a music file and generates terrain for it based on its spectrogram.'
+    'description': 'Add-on for creating a small interactive game, which generates terrain based on music'
 }
 
 # TODO: put the script codes to different files, OMFG
@@ -223,6 +223,7 @@ class TerrainGenerator:
 
         self._initialize_blender_object()
         self._create_terrain_mesh_for_object()
+        self._add_material()
         self._create_terrain_logic()
 
     def _initialize_blender_object(self):
@@ -235,6 +236,14 @@ class TerrainGenerator:
         vertices = TerrainGenerator._create_terrain_vertices(bm, self._spectrogram, self._configuration)
         TerrainGenerator._create_terrain_faces(bm, vertices)
         bmesh.update_edit_mesh(mesh)
+
+    def _add_material(self):
+        """
+        This is required because without a material on our terrain, the shaders are not working correctly (for some
+        reason)
+        """
+        empty_material = bpy.data.materials.new(name="EmptyMaterial")
+        self._terrain.data.materials.append(empty_material)
 
     def _create_terrain_logic(self):
         sensor = Blender.create_always_sensor(self._terrain)
