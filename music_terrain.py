@@ -10,7 +10,7 @@ import librosa
 bl_info = {
     'name': 'Music Terrain',
     'author': 'Julius Flimmel',
-    'version': (0, 4, 1),
+    'version': (0, 4, 2),
     'category': 'Add Mesh',
     'description': 'Takes a music file and generates terrain for it based on its spectrogram.'
 }
@@ -133,6 +133,9 @@ class GenerationOperator(bpy.types.Operator):
 
     def execute(self, context):
         try:
+            # TODO: clear whole scene (the lamp, cube, camera...)
+            # TODO: generate the sun (directional light)
+            # TODO: remove cycles nodes...
             TerrainGenerator().generate(context, Properties.get_all(context.scene))
             player = PlayerGenerator().generate(context)
             Camera().update(player, Properties.get_all(context.scene).file_path)
@@ -202,14 +205,17 @@ class TerrainGenerator:
     Class which takes care of terrain generation
     """
 
+    # TODO: omfg dont use these static methods, save terrain as a variable
+    # TODO: place logic in a separate class (also for all the other generated objects (camera, player, ...))
     def generate(self, context, configuration: TerrainGeneratorConfiguration):
         spectrogram = SoundUtils.get_spectrogram(configuration)
-        blender_object = Blender.create_blender_object_with_empty_mesh(configuration.object_name,
+        terrain_object = Blender.create_blender_object_with_empty_mesh(configuration.object_name,
                                                                        configuration.mesh_name)
         material = MaterialFactory.create_material(configuration.material_scale)
 
-        self._initialize_blender_object(context, blender_object, material)
-        self._create_terrain_mesh_for_object(blender_object, spectrogram, configuration)
+        self._initialize_blender_object(context, terrain_object, material)
+        self._create_terrain_mesh_for_object(terrain_object, spectrogram, configuration)
+        self._create_terrain_logic(terrain_object)
 
     @staticmethod
     def _initialize_blender_object(context, blender_object, material):
@@ -224,6 +230,135 @@ class TerrainGenerator:
         vertices = TerrainGenerator._create_terrain_vertices(bm, spectrogram, configuration)
         TerrainGenerator._create_terrain_faces(bm, vertices)
         bmesh.update_edit_mesh(mesh)
+
+    @staticmethod
+    def _create_terrain_logic(terrain_object):
+        sensor = Blender.create_always_sensor(terrain_object)
+        # TODO: PUT THE CODE TO DIFFERENT FILE OMFG
+        script = Blender.create_script('terrain_script.py',
+'''
+import bge
+import time
+
+cont = bge.logic.getCurrentController()
+start_time = time.time()
+
+VertexShader = """
+    varying vec4 position;  
+    varying vec4 light; 
+    
+    void main()
+    {
+        vec3 normalDirection = normalize(gl_NormalMatrix * gl_Normal);
+        vec3 lightDirection;
+        float attenuation;
+ 
+        // directional light?
+        if (0.0 == gl_LightSource[0].position.w) {
+           attenuation = 1.0; // no attenuation
+           lightDirection = normalize(vec3(gl_LightSource[0].position));
+        } else {
+           vec3 vertexToLightSource = 
+              vec3(gl_LightSource[0].position 
+              - gl_ModelViewMatrix * gl_Vertex);
+           float distance = length(vertexToLightSource);
+           attenuation = 1.0 / distance; // linear attenuation 
+           lightDirection = normalize(vertexToLightSource);
+ 
+           if (gl_LightSource[0].spotCutoff <= 90.0) // spotlight?
+           {
+              float clampedCosine = max(0.0, dot(-lightDirection, 
+                 gl_LightSource[0].spotDirection));
+              if (clampedCosine < gl_LightSource[0].spotCosCutoff) 
+                 // outside of spotlight cone?
+              {
+                 attenuation = 0.0;
+              }
+              else
+              {
+                 attenuation = attenuation * pow(clampedCosine, 
+                    gl_LightSource[0].spotExponent);
+              }
+           }
+        }
+        vec3 diffuseReflection = attenuation 
+           * vec3(gl_LightSource[0].diffuse) 
+           * max(0.0, dot(normalDirection, lightDirection));
+ 
+        light = vec4(diffuseReflection, 1.0);
+        position = gl_Vertex;
+        
+        gl_Position = gl_ModelViewProjectionMatrix * gl_Vertex;
+    }
+"""
+
+FragmentShader = """
+    #version 120
+    uniform float time;
+    
+    varying vec4 position; 
+    varying vec4 light; 
+    
+    const float HEIGHT_MULTIPLIER = 1.0 / 9.0;
+    const int COLOR_RAMPS_COUNT = 7;
+    const vec4[COLOR_RAMPS_COUNT] COLOR_RAMPS = vec4[] (
+        vec4(0.001, 0.000, 0.000, 1.000), 
+        vec4(0.008, 0.007, 0.247, 0.625),
+        vec4(0.014, 0.007, 0.247, 0.625),
+        vec4(0.040, 0.875, 1.000, 0.539),
+        vec4(0.452, 0.008, 0.381, 0.015),
+        vec4(0.662, 0.008, 0.381, 0.015),
+        vec4(0.770, 0.278, 0.196, 0.035)
+    );
+    
+    vec4 getColorFromColorRamp(float position, int colorRampIndex) {
+        vec4 start = vec4(0.0, COLOR_RAMPS[0].yzw);
+        vec4 end = vec4(1.0, COLOR_RAMPS[COLOR_RAMPS_COUNT - 1].yzw);
+        
+        if (colorRampIndex > 0) {
+            start = COLOR_RAMPS[colorRampIndex - 1];
+        }
+        if (colorRampIndex < COLOR_RAMPS_COUNT) {
+            end = COLOR_RAMPS[colorRampIndex];
+        }
+        
+        float relativePosition = (position - start.x) / (end.x - start.x);
+        return vec4(mix(start.yzw, end.yzw, relativePosition), 1.0);
+    }
+    
+    vec4 getColor() {
+        float height = position.z * HEIGHT_MULTIPLIER;
+    
+        for (int i = 0; i < COLOR_RAMPS_COUNT; ++i) {
+            vec4 colorRamp = COLOR_RAMPS[i];
+            if (height < colorRamp.x) {
+                return getColorFromColorRamp(height, i);
+            }
+        }
+        
+        return getColorFromColorRamp(height, COLOR_RAMPS_COUNT);
+    }
+    
+    void main()
+    {   
+        gl_FragColor = light * getColor();
+    }
+"""
+
+print('called')
+mesh = cont.owner.meshes[0]
+for mat in mesh.materials:
+    shader = mat.getShader()
+    if shader != None:
+        if not shader.isValid():
+            shader.setSource(VertexShader, FragmentShader, True)
+
+        #shader.setUniform1f('time', time.time() - start_time)
+'''
+                                       )
+        controller = Blender.create_python_controller(terrain_object)
+        controller.text = script
+        controller.link(sensor)
 
     @staticmethod
     def _create_terrain_vertices(bm, spectrogram, configuration):
@@ -368,16 +503,14 @@ class PlayerGenerator:
         return sensor
 
     def _create_logic_controller(self):
-        bpy.ops.logic.controller_add(type='PYTHON', name='logic_controller', object=self._player_object.name)
-        controller = self._player_object.game.controllers[-1]
+        controller = Blender.create_python_controller(self._player_object, 'logic_controller')
         controller.text = self._create_logic_controller_script()
 
         return controller
 
     def _create_logic_controller_script(self):
-        script = bpy.data.texts.new('test.py')
         # TODO: consider adding this to a separate file...
-        script.from_string(
+        return Blender.create_script('player_logic.py',
 """
 import bge
 
@@ -410,7 +543,6 @@ def playerLogic():
 playerLogic()
 """
         )
-        return script
 
 
 class Camera:
@@ -629,6 +761,11 @@ class Blender:
         return obj.game.controllers[-1]
 
     @staticmethod
+    def create_python_controller(obj, name='controller'):
+        bpy.ops.logic.controller_add(type='PYTHON', name=name, object=obj.name)
+        return obj.game.controllers[-1]
+
+    @staticmethod
     def create_camera_actuator(obj, name='actuator'):
         bpy.ops.logic.actuator_add(type='CAMERA', name=name, object=obj.name)
         return obj.game.actuators[-1]
@@ -637,6 +774,12 @@ class Blender:
     def create_sound_actuator(obj, name='actuator'):
         bpy.ops.logic.actuator_add(type='SOUND', name=name, object=obj.name)
         return obj.game.actuators[-1]
+
+    @staticmethod
+    def create_script(script_name: str, script_text: str):
+        script = bpy.data.texts.new(script_name)
+        script.from_string(script_text)
+        return script
 
     @staticmethod
     def create_sound(file_path):
