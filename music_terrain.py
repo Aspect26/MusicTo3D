@@ -11,7 +11,7 @@ from mathutils import Euler
 bl_info = {
     'name': 'Music Terrain',
     'author': 'Julius Flimmel',
-    'version': (0, 4, 7),
+    'version': (0, 4, 8),
     'category': 'Game Engine',
     'description': 'Add-on for creating a small interactive game, which generates terrain based on music'
 }
@@ -389,7 +389,7 @@ for mat in mesh.materials:
         else:
             x = wavelength * configuration.width_multiplier
 
-        y = time_step * configuration.step_multiplier
+        y = time_step * 0.5
         z = amplitude * configuration.height_multiplier
         z = z if z + 1.0 <= 0 else np.log(z + 1.0)
 
@@ -458,10 +458,12 @@ for mat in mesh.materials:
     def _create_terrain_faces(bm, vertices):
         for wavelength in range(len(vertices) - 1):
             for time_step in range(len(vertices[wavelength]) - 1):
-                bm.faces.new((vertices[wavelength][time_step], vertices[wavelength + 1][time_step],
-                             vertices[wavelength][time_step + 1]))
-                bm.faces.new((vertices[wavelength][time_step + 1], vertices[wavelength + 1][time_step],
-                             vertices[wavelength + 1][time_step + 1]))
+                face = bm.faces.new((vertices[wavelength][time_step], vertices[wavelength + 1][time_step],
+                                    vertices[wavelength][time_step + 1]))
+                face.smooth = True
+                face = bm.faces.new((vertices[wavelength][time_step + 1], vertices[wavelength + 1][time_step],
+                                    vertices[wavelength + 1][time_step + 1]))
+                face.smooth = True
 
 
 class SunGenerator:
@@ -681,6 +683,12 @@ class Blender:
     @staticmethod
     def set_object_mode_edit():
         bpy.ops.object.mode_set(mode='EDIT')
+
+    @staticmethod
+    def smooth_shade():
+        bpy.ops.mesh.normals_make_consistent()
+        bpy.ops.object.mode_set(mode='OBJECT')
+        bpy.ops.object.shade_smooth()
 
     @staticmethod
     def find_node_in_material(material, node_identifier):
