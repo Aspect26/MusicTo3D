@@ -1,19 +1,22 @@
-import traceback
-from typing import List
-
 import numpy as np
-
 import bpy
 import bmesh
 import librosa
+import traceback
+
+from typing import List
+from mathutils import Euler
+
 
 bl_info = {
     'name': 'Music Terrain',
     'author': 'Julius Flimmel',
-    'version': (0, 4, 2),
-    'category': 'Add Mesh',
+    'version': (0, 4, 4),
+    'category': 'Game Engine',
     'description': 'Takes a music file and generates terrain for it based on its spectrogram.'
 }
+
+# TODO: put the script codes to different files, OMFG
 
 
 def register():
@@ -133,12 +136,11 @@ class GenerationOperator(bpy.types.Operator):
 
     def execute(self, context):
         try:
-            # TODO: clear whole scene (the lamp, cube, camera...)
-            # TODO: generate the sun (directional light)
-            # TODO: remove cycles nodes...
+            Blender.clear_scene()
             TerrainGenerator().generate(context, Properties.get_all(context.scene))
-            player = PlayerGenerator().generate(context)
-            Camera().update(player, Properties.get_all(context.scene).file_path)
+            player = PlayerGenerator().generate()
+            SunGenerator().generate()
+            CameraGenerator().generate(player, Properties.get_all(context.scene).file_path)
         except Exception:
             traceback.print_exc()
 
@@ -205,36 +207,37 @@ class TerrainGenerator:
     Class which takes care of terrain generation
     """
 
-    # TODO: omfg dont use these static methods, save terrain as a variable
+    def __init__(self):
+        self._terrain = None
+        self._context = None
+        self._spectrogram = None
+        self._configuration = None
+
     # TODO: place logic in a separate class (also for all the other generated objects (camera, player, ...))
     def generate(self, context, configuration: TerrainGeneratorConfiguration):
-        spectrogram = SoundUtils.get_spectrogram(configuration)
-        terrain_object = Blender.create_blender_object_with_empty_mesh(configuration.object_name,
-                                                                       configuration.mesh_name)
-        material = MaterialFactory.create_material(configuration.material_scale)
+        self._context = context
+        self._configuration = configuration
+        self._terrain = Blender.create_blender_object_with_empty_mesh(configuration.object_name,
+                                                                      configuration.mesh_name)
+        self._spectrogram = SoundUtils.get_spectrogram(configuration)
 
-        self._initialize_blender_object(context, terrain_object, material)
-        self._create_terrain_mesh_for_object(terrain_object, spectrogram, configuration)
-        self._create_terrain_logic(terrain_object)
+        self._initialize_blender_object()
+        self._create_terrain_mesh_for_object()
+        self._create_terrain_logic()
 
-    @staticmethod
-    def _initialize_blender_object(context, blender_object, material):
-        Blender.add_object_to_scene(context, blender_object)
+    def _initialize_blender_object(self):
+        Blender.add_object_to_scene(self._context, self._terrain)
         Blender.set_object_mode_edit()
-        Blender.add_material_to_object(blender_object, material)
 
-    @staticmethod
-    def _create_terrain_mesh_for_object(blender_object, spectrogram, configuration):
-        mesh = blender_object.data
-        bm = bmesh.from_edit_mesh(blender_object.data)
-        vertices = TerrainGenerator._create_terrain_vertices(bm, spectrogram, configuration)
+    def _create_terrain_mesh_for_object(self):
+        mesh = self._terrain.data
+        bm = bmesh.from_edit_mesh(self._terrain.data)
+        vertices = TerrainGenerator._create_terrain_vertices(bm, self._spectrogram, self._configuration)
         TerrainGenerator._create_terrain_faces(bm, vertices)
         bmesh.update_edit_mesh(mesh)
 
-    @staticmethod
-    def _create_terrain_logic(terrain_object):
-        sensor = Blender.create_always_sensor(terrain_object)
-        # TODO: PUT THE CODE TO DIFFERENT FILE OMFG
+    def _create_terrain_logic(self):
+        sensor = Blender.create_always_sensor(self._terrain)
         script = Blender.create_script('terrain_script.py',
 '''
 import bge
@@ -356,7 +359,7 @@ for mat in mesh.materials:
         #shader.setUniform1f('time', time.time() - start_time)
 '''
                                        )
-        controller = Blender.create_python_controller(terrain_object)
+        controller = Blender.create_python_controller(self._terrain)
         controller.text = script
         controller.link(sensor)
 
@@ -374,9 +377,9 @@ for mat in mesh.materials:
             vertices.append(row_vertices)
 
         if configuration.detailed_smoothing:
-            vertices = TerrainGenerator._detailed_smooth_vertices(vertices, configuration.detailed_smoothing_depth)
+            TerrainGenerator._detailed_smooth_vertices(vertices, configuration.detailed_smoothing_depth)
         elif configuration.smoothing:
-            vertices = TerrainGenerator._smooth_vertices(vertices, configuration.smoothing_amount)
+            TerrainGenerator._smooth_vertices(vertices, configuration.smoothing_amount)
 
         return vertices
 
@@ -403,15 +406,11 @@ for mat in mesh.materials:
             for y in range(len(vertices[0])):
                 height_sum = 0
                 for level in range(1, levels + 1):
-                    # TODO: extract this to a function
                     neighbour_vertices = TerrainGenerator._get_neighbour_vertices(vertices, x, y, level)
                     height_sum += Utils.reduce(lambda vertex, acc: vertex.co[2] + acc, neighbour_vertices) / len(neighbour_vertices)
 
                 smoothed_vertex = vertices[x][y]
                 smoothed_vertex.co[2] = height_sum / levels
-
-        # TODO: so... do we need to return it??
-        return vertices
 
     @staticmethod
     def _smooth_vertices(vertices: List, smoothing_size: int):
@@ -421,9 +420,6 @@ for mat in mesh.materials:
                 height_sum = Utils.reduce(lambda vertex, acc: vertex.co[2] + acc, neighbour_vertices)
                 smoothed_vertex = vertices[x][y]
                 smoothed_vertex.co[2] = height_sum / len(neighbour_vertices)
-
-        # TODO: so... do we need to return it??
-        return vertices
 
     @staticmethod
     def _get_neighbour_vertices(vertices: List, x: int, y: int, size: int) -> List:
@@ -468,28 +464,27 @@ for mat in mesh.materials:
                              vertices[wavelength + 1][time_step + 1]))
 
 
+class SunGenerator:
+
+    def generate(self):
+        lamp = Blender.create_directional_light()
+        lamp.location = (5.0, 5.0, 5.0)
+
+
 class PlayerGenerator:
 
     def __init__(self):
         self._player_object = None
 
-    def generate(self, context):
+    def generate(self):
         self._create_player()
         self._create_player_logic()
 
         return self._player_object
 
     def _create_player(self):
-        scene = bpy.context.scene
-        mesh = bpy.data.meshes.new('Basic_Sphere')
-        self._player_object = bpy.data.objects.new("Player", mesh)
-        scene.objects.link(self._player_object)
+        self._player_object = Blender.create_sphere('Player')
         self._player_object.location = (6.0, 3.0, 1.0)
-
-        bm = bmesh.new()
-        bmesh.ops.create_uvsphere(bm, u_segments=32, v_segments=16, diameter=0.5)
-        bm.to_mesh(mesh)
-        bm.free()
 
     def _create_player_logic(self):
         sensor = self._create_always_sensor()
@@ -509,7 +504,6 @@ class PlayerGenerator:
         return controller
 
     def _create_logic_controller_script(self):
-        # TODO: consider adding this to a separate file...
         return Blender.create_script('player_logic.py',
 """
 import bge
@@ -545,7 +539,7 @@ playerLogic()
         )
 
 
-class Camera:
+class CameraGenerator:
 
     _HEIGHT = 5.0
     _MIN_DISTANCE = 10.0
@@ -557,20 +551,18 @@ class Camera:
         self._player_object = None
         self._sound_file_path = None
 
-    def update(self, player_object, sound_file_path):
+    def generate(self, player_object, sound_file_path):
         self._player_object = player_object
         self._sound_file_path = sound_file_path
 
-        self._get_camera()
+        self._create_camera()
         self._create_camera_logic()
         self._create_camera_sound()
 
-    def _get_camera(self):
-        self._camera = bpy.data.objects['Camera']
-        if self._camera is None:
-            self._create_new_camera()
-        else:
-            self._reset_camera()
+    def _create_camera(self):
+        self._camera = Blender.create_camera()
+        self._camera.location = (7.0, -7.0, 5.0)
+        self._camera.rotation_euler = Euler((1.221, 0.0, 0.0), 'XYZ')
 
     def _create_camera_logic(self):
         sensor = Blender.create_always_sensor(self._camera)
@@ -603,79 +595,6 @@ class Camera:
 
         return actuator
 
-    def _create_new_camera(self):
-        # TODO: implement me
-        raise Exception("Creating a new camera object is not implemented, yet. Please do not remove the default camera for now")
-
-    def _reset_camera(self):
-        # TODO: these clears doesn't work
-        self._camera.game.sensors.items().clear()
-        self._camera.game.controllers.items().clear()
-        self._camera.game.actuators.items().clear()
-
-
-class ColorRampElement:
-
-    def __init__(self, position, color):
-        self.position = position
-        self.color = color
-
-
-class MaterialFactory:
-
-    _DEFAULT_MATERIAL = {
-        'name': 'Terrain material',
-        'elements': [
-            ColorRampElement(0.001, (0.000, 0.000, 1.000, 1)),
-            ColorRampElement(0.008, (0.007, 0.247, 0.625, 1)),
-            ColorRampElement(0.014, (0.007, 0.247, 0.625, 1)),
-            ColorRampElement(0.040, (0.875, 1.000, 0.539, 1)),
-            ColorRampElement(0.452, (0.008, 0.381, 0.015, 1)),
-            ColorRampElement(0.662, (0.008, 0.381, 0.015, 1)),
-            ColorRampElement(0.770, (0.094, 0.041, 0.000, 1)),
-        ]
-    }
-
-    @staticmethod
-    def create_material(color_ramp_scale):
-        material_data = MaterialFactory._DEFAULT_MATERIAL
-        material = Blender.create_node_material(material_data['name'])
-
-        texture_coordinate_node = MaterialNodes.TextureCoordinate(material)
-        separate_node = MaterialNodes.SeparateXYZ(material)
-        divide_node = MaterialNodes.DivideBy(material, color_ramp_scale)
-        color_ramp_node = MaterialFactory._create_color_ramp_node(material, material_data['elements'])
-        bsdf_node = MaterialNodes.BSDFDiffuse(material)
-        material_output_node = MaterialNodes.MaterialOutput(material, Blender.find_node_in_material(material, MaterialNodes.MaterialOutput.IDENTIFIER))
-
-        MaterialNodes.link(material, texture_coordinate_node.outputs.object, separate_node.inputs.vector)
-        MaterialNodes.link(material, separate_node.outputs.z, divide_node.inputs.value)
-        MaterialNodes.link(material, divide_node.outputs.value, color_ramp_node.inputs.factor)
-        MaterialNodes.link(material, color_ramp_node.outputs.color, bsdf_node.inputs.color)
-        MaterialNodes.link(material, bsdf_node.outputs.bsdf, material_output_node.inputs.surface)
-
-        return material
-
-    @staticmethod
-    def _create_color_ramp_node(material, data):
-        node = MaterialNodes.ColorRamp(material)
-        color_ramp_elements = node.get_elements()
-
-        # There are initially two elements that we need to get rid of (One at the beginning and one at the end). Another
-        # problem is, that there needs to be at least one element present. So we delete one now, and second one later.
-
-        color_ramp_elements.remove(color_ramp_elements[0])
-
-        for element_data in data:
-            # There are already two elements from the beginning
-            element = color_ramp_elements.new(0)
-            element.color = element_data.color
-            element.position = element_data.position
-
-        color_ramp_elements.remove(color_ramp_elements[len(data)])
-
-        return node
-
 
 class SoundUtils:
     """
@@ -704,6 +623,43 @@ class Blender:
     """
 
     @staticmethod
+    def clear_scene():
+        for item in bpy.data.objects.values():
+            bpy.data.objects.remove(item)
+
+    @staticmethod
+    def create_camera(name='Camera'):
+        scene = bpy.context.scene
+        camera_data = bpy.data.cameras.new(name=name)
+        camera = bpy.data.objects.new(name=name, object_data=camera_data)
+        scene.objects.link(camera)
+
+        return camera
+
+    @staticmethod
+    def create_directional_light():
+        scene = bpy.context.scene
+        lamp_data = bpy.data.lamps.new(name="Directional light", type='SUN')
+        lamp = bpy.data.objects.new(name="Directional Light", object_data=lamp_data)
+        scene.objects.link(lamp)
+
+        return lamp
+
+    @staticmethod
+    def create_sphere(name='Sphere'):
+        scene = bpy.context.scene
+        mesh = bpy.data.meshes.new('Basic_Sphere')
+        sphere_object = bpy.data.objects.new(name, mesh)
+        scene.objects.link(sphere_object)
+
+        bm = bmesh.new()
+        bmesh.ops.create_uvsphere(bm, u_segments=32, v_segments=16, diameter=0.5)
+        bm.to_mesh(mesh)
+        bm.free()
+
+        return sphere_object
+
+    @staticmethod
     def create_empty_mesh(mesh_name):
         return bpy.data.meshes.new(mesh_name)
 
@@ -725,21 +681,6 @@ class Blender:
     @staticmethod
     def set_object_mode_edit():
         bpy.ops.object.mode_set(mode='EDIT')
-
-    @staticmethod
-    def add_material_to_object(blender_object, material):
-        blender_object.data.materials.append(material)
-
-    @staticmethod
-    def create_node_material(name):
-        material = bpy.data.materials.new(name=name)
-        material.use_nodes = True
-
-        return material
-
-    @staticmethod
-    def create_material_node(material, node_class_name):
-        return material.node_tree.nodes.new(node_class_name)
 
     @staticmethod
     def find_node_in_material(material, node_identifier):
@@ -784,175 +725,6 @@ class Blender:
     @staticmethod
     def create_sound(file_path):
         return bpy.data.sounds.load(file_path, check_existing=True)
-
-
-class NodeOutputs:
-    def __init__(self, node):
-        self._node = node
-
-    def _get(self, index):
-        return self._node.outputs[index]
-
-
-class NodeInputs:
-    def __init__(self, node):
-        self._node = node
-
-    def _get(self, index):
-        return self._node.inputs[index]
-
-
-class MaterialNodes:
-    """
-    Our wrapper for Blender's material nodes, because working directly with them is too inconvenient.
-    """
-
-    @staticmethod
-    def link(material, from_output, to_input):
-        material.node_tree.links.new(from_output, to_input)
-
-    class MaterialNode:
-
-        def __init__(self, material, node_class_name, node=None):
-            self._material = material
-            self._node = Blender.create_material_node(material, node_class_name) if node is None else node
-
-    class TextureCoordinate(MaterialNode):
-
-        class Outputs(NodeOutputs):
-            @property
-            def generated(self): return self._get(0)
-
-            @property
-            def normal(self): return self._get(1)
-
-            @property
-            def uv(self): return self._get(2)
-
-            @property
-            def object(self): return self._get(3)
-
-            @property
-            def camera(self): return self._get(4)
-
-            @property
-            def window(self): return self._get(5)
-
-            @property
-            def reflection(self): return self._get(6)
-
-        IDENTIFIER = 'ShaderNodeTexCoord'
-
-        def __init__(self, material):
-            super().__init__(material, self.IDENTIFIER)
-            self.outputs = MaterialNodes.TextureCoordinate.Outputs(self._node)
-
-    class SeparateXYZ(MaterialNode):
-
-        class Inputs(NodeInputs):
-            @property
-            def vector(self): return self._get(0)
-
-        class Outputs(NodeOutputs):
-            @property
-            def x(self): return self._get(0)
-
-            @property
-            def y(self): return self._get(1)
-
-            @property
-            def z(self): return self._get(2)
-
-        IDENTIFIER = 'ShaderNodeSeparateXYZ'
-
-        def __init__(self, material):
-            super().__init__(material, self.IDENTIFIER)
-            self.outputs = MaterialNodes.SeparateXYZ.Outputs(self._node)
-            self.inputs = MaterialNodes.SeparateXYZ.Inputs(self._node)
-
-    class DivideBy(MaterialNode):
-
-        class Inputs(NodeInputs):
-            @property
-            def value(self): return self._get(0)
-
-        class Outputs(NodeOutputs):
-            @property
-            def value(self): return self._get(0)
-
-        IDENTIFIER = 'ShaderNodeMath'
-
-        def __init__(self, material, value):
-            super().__init__(material, self.IDENTIFIER)
-            self.outputs = MaterialNodes.DivideBy.Outputs(self._node)
-            self.inputs = MaterialNodes.DivideBy.Inputs(self._node)
-
-            self._node.operation = 'DIVIDE'
-            self._node.inputs[1].default_value = value
-
-    class ColorRamp(MaterialNode):
-
-        class Inputs(NodeInputs):
-            @property
-            def factor(self): return self._get(0)
-
-        class Outputs(NodeOutputs):
-            @property
-            def color(self): return self._get(0)
-
-            @property
-            def alpha(self): return self._get(1)
-
-        IDENTIFIER = 'ShaderNodeValToRGB'
-
-        def __init__(self, material):
-            super().__init__(material, self.IDENTIFIER)
-            self.outputs = MaterialNodes.ColorRamp.Outputs(self._node)
-            self.inputs = MaterialNodes.ColorRamp.Inputs(self._node)
-
-        def get_elements(self):
-            return self._node.color_ramp.elements
-
-    class BSDFDiffuse(MaterialNode):
-
-        class Inputs(NodeInputs):
-            @property
-            def color(self): return self._get(0)
-
-            @property
-            def roughness(self): return self._get(1)
-
-            @property
-            def normal(self): return self._get(2)
-
-        class Outputs(NodeOutputs):
-            @property
-            def bsdf(self): return self._get(0)
-
-        IDENTIFIER = 'ShaderNodeBsdfDiffuse'
-
-        def __init__(self, material):
-            super().__init__(material, self.IDENTIFIER)
-            self.outputs = MaterialNodes.BSDFDiffuse.Outputs(self._node)
-            self.inputs = MaterialNodes.BSDFDiffuse.Inputs(self._node)
-
-    class MaterialOutput(MaterialNode):
-
-        class Inputs(NodeInputs):
-            @property
-            def surface(self): return self._get(0)
-
-            @property
-            def volume(self): return self._get(1)
-
-            @property
-            def displacement(self): return self._get(2)
-
-        IDENTIFIER = 'Material Output'
-
-        def __init__(self, material, node):
-            super().__init__(material, self.IDENTIFIER, node)
-            self.inputs = MaterialNodes.MaterialOutput.Inputs(self._node)
 
 
 class Utils:
