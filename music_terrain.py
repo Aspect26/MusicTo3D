@@ -11,7 +11,7 @@ from mathutils import Euler
 bl_info = {
     'name': 'Music Terrain',
     'author': 'Julius Flimmel',
-    'version': (0, 4, 6),
+    'version': (0, 4, 7),
     'category': 'Game Engine',
     'description': 'Add-on for creating a small interactive game, which generates terrain based on music'
 }
@@ -45,12 +45,9 @@ class Properties:
     OBJECT_NAME = 'ObjectName'
     MESH_NAME = 'MeshName'
 
-    MATERIAL_COLOR_RAMP_SCALE = 'MaterialColorRampScale'
-
     TERRAIN_USE_LOG_SCALE = 'TerrainUseLogScale'
     TERRAIN_WIDTH_MULTIPLIER = 'TerrainSizeMultiplier'
     TERRAIN_HEIGHT_MULTIPLIER = 'TerrainHeightMultiplier'
-    TERRAIN_STEP_MULTIPLIER = 'TerrainStepMultiplier'
     SONG_DURATION = 'TerrainSteps'
     OFFSET = 'TerrainStepsOffset'
 
@@ -70,30 +67,26 @@ class Properties:
                  bpy.props.StringProperty(name="Object name", description='Name of the object that will be generated', default='Music Terrain')),
         Property(MESH_NAME,
                  bpy.props.StringProperty(name="Mesh name", description='Name of the mesh component of the generated object', default='Spectrogram Mesh')),
-        Property(MATERIAL_COLOR_RAMP_SCALE,
-                 bpy.props.FloatProperty(name="Material height scale", description='Multiplier for the material color change steps height', subtype='UNSIGNED', default=9.0)),
         Property(TERRAIN_USE_LOG_SCALE,
-                 bpy.props.BoolProperty(name="LogScale", description='Use logscale for the wave axis?', default=True)),
+                 bpy.props.BoolProperty(name="LogScale", description='Use logscale for the wave axis?', default=False)),
         Property(TERRAIN_WIDTH_MULTIPLIER,
-                 bpy.props.FloatProperty(name='Width multiplier', subtype='UNSIGNED', default=3.0)),
+                 bpy.props.FloatProperty(name='Width multiplier', subtype='UNSIGNED', default=0.2)),
         Property(TERRAIN_HEIGHT_MULTIPLIER,
-                 bpy.props.FloatProperty(name='Height multiplier', subtype='UNSIGNED', default=0.2)),
-        Property(TERRAIN_STEP_MULTIPLIER,
-                 bpy.props.FloatProperty(name='Step multiplier', subtype='UNSIGNED', default=0.5)),
+                 bpy.props.FloatProperty(name='Height multiplier', subtype='UNSIGNED', default=1.0)),
         Property(SONG_DURATION,
                  bpy.props.FloatProperty(name='Duration', description='Duration of the sampled song (in seconds). Zero to load whole song', default=2.0)),
         Property(OFFSET,
                  bpy.props.FloatProperty(name='Offset', description='Offset the song (in seconds)', subtype='UNSIGNED', default=0)),
         Property(EFFECT_SMOOTH,
-                 bpy.props.BoolProperty(name='Effect: Smoothing', description='Effect that turns on smoothing', default=False)),
+                 bpy.props.BoolProperty(name='Effect: Smoothing', description='Effect that turns on smoothing', default=True)),
         Property(EFFECT_SMOOTH_AMOUNT,
-                 bpy.props.IntProperty(name='Effect: Smoothing amount', description='Amount of smoothing (higher number results in smoother terrain', subtype='UNSIGNED', default=3)),
+                 bpy.props.IntProperty(name='Effect: Smoothing amount', description='Amount of smoothing (higher number results in smoother terrain', subtype='UNSIGNED', default=5)),
         Property(EFFECT_ROTATE,
                  bpy.props.BoolProperty(name="Effect: Rotate", description='Add rotation effect. The terrain is rotated along the \'time\' axis', default=False)),
         Property(EFFECT_ROTATE_AMOUNT,
                  bpy.props.FloatProperty(name='Effect: Rotate amount', description='Degrees to rotate by in each step', default=3.0)),
         Property(EFFECT_DETAILED_SMOOTHING,
-                 bpy.props.BoolProperty(name='Effect: Detailed smoothing', description='Smoothing which takes multiple smooth levels and averages them', default=True)),
+                 bpy.props.BoolProperty(name='Effect: Detailed smoothing', description='Smoothing which takes multiple smooth levels and averages them', default=False)),
         Property(EFFECT_DETAILED_SMOOTHING_DEPTH,
                  bpy.props.IntProperty(name='Effect: Detailed smoothing depth', description='Number of smoothing levels to compute', subtype='UNSIGNED', default=3))
     ]
@@ -107,13 +100,14 @@ class Properties:
     def get_all(scene):
         return TerrainGeneratorConfiguration(
             Properties._get(scene, Properties.FILE_PATH), Properties._get(scene, Properties.OBJECT_NAME),
-            Properties._get(scene, Properties.MESH_NAME), Properties._get(scene, Properties.MATERIAL_COLOR_RAMP_SCALE),
-            Properties._get(scene, Properties.TERRAIN_USE_LOG_SCALE), Properties._get(scene, Properties.TERRAIN_WIDTH_MULTIPLIER),
-            Properties._get(scene, Properties.TERRAIN_HEIGHT_MULTIPLIER), Properties._get(scene, Properties.SONG_DURATION),
-            Properties._get(scene, Properties.TERRAIN_STEP_MULTIPLIER), Properties._get(scene, Properties.OFFSET),
+            Properties._get(scene, Properties.MESH_NAME), Properties._get(scene, Properties.TERRAIN_USE_LOG_SCALE),
+            Properties._get(scene, Properties.TERRAIN_WIDTH_MULTIPLIER),
+            Properties._get(scene, Properties.TERRAIN_HEIGHT_MULTIPLIER),
+            Properties._get(scene, Properties.SONG_DURATION), Properties._get(scene, Properties.OFFSET),
             Properties._get(scene, Properties.EFFECT_ROTATE), Properties._get(scene, Properties.EFFECT_ROTATE_AMOUNT),
             Properties._get(scene, Properties.EFFECT_SMOOTH), Properties._get(scene, Properties.EFFECT_SMOOTH_AMOUNT),
-            Properties._get(scene, Properties.EFFECT_DETAILED_SMOOTHING), Properties._get(scene, Properties.EFFECT_DETAILED_SMOOTHING_DEPTH)
+            Properties._get(scene, Properties.EFFECT_DETAILED_SMOOTHING),
+            Properties._get(scene, Properties.EFFECT_DETAILED_SMOOTHING_DEPTH)
         )
 
     @staticmethod
@@ -162,11 +156,9 @@ class PropertiesPanel(bpy.types.Panel):
         self.layout.row().prop(context.scene, Properties.FILE_PATH)
         self.layout.row().prop(context.scene, Properties.OBJECT_NAME)
         self.layout.row().prop(context.scene, Properties.MESH_NAME)
-        self.layout.row().prop(context.scene, Properties.MATERIAL_COLOR_RAMP_SCALE)
         self.layout.row().prop(context.scene, Properties.TERRAIN_USE_LOG_SCALE)
         self.layout.row().prop(context.scene, Properties.TERRAIN_WIDTH_MULTIPLIER)
         self.layout.row().prop(context.scene, Properties.TERRAIN_HEIGHT_MULTIPLIER)
-        self.layout.row().prop(context.scene, Properties.TERRAIN_STEP_MULTIPLIER)
         self.layout.row().prop(context.scene, Properties.SONG_DURATION)
         self.layout.row().prop(context.scene, Properties.OFFSET)
         self.layout.row().prop(context.scene, Properties.EFFECT_ROTATE)
@@ -181,19 +173,17 @@ class PropertiesPanel(bpy.types.Panel):
 
 class TerrainGeneratorConfiguration:
 
-    def __init__(self, file_path, object_name, mesh_name, material_scale, use_log_scale, width_multiplier,
-                 height_multiplier, duration, step_multiplier, offset, effect_rotate, effect_rotate_amount, smoothing,
+    def __init__(self, file_path, object_name, mesh_name, use_log_scale, width_multiplier,
+                 height_multiplier, duration, offset, effect_rotate, effect_rotate_amount, smoothing,
                  smoothing_amount, detailed_smoothing, detailed_smoothing_depth):
         self.file_path = file_path
         self.object_name = object_name
         self.mesh_name = mesh_name
-        self.material_scale = material_scale
         self.use_log_scale = use_log_scale
         self.width_multiplier = width_multiplier
         self.height_multiplier = height_multiplier
         self.duration = duration
         self.offset = offset
-        self.step_multiplier = step_multiplier
         self.effect_rotate = effect_rotate
         self.effect_rotate_amount = effect_rotate_amount
         self.smoothing = smoothing
@@ -401,6 +391,7 @@ for mat in mesh.materials:
 
         y = time_step * configuration.step_multiplier
         z = amplitude * configuration.height_multiplier
+        z = z if z + 1.0 <= 0 else np.log(z + 1.0)
 
         vertex = [x, y, z]
         if configuration.effect_rotate:
