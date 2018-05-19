@@ -130,9 +130,12 @@ class GenerationOperator(bpy.types.Operator):
 
     def execute(self, context):
         try:
+            config = Properties.get_all(context.scene)
+            spectrogram, bpm = SoundUtils.get_song_data(config)
+
             Blender.clear_scene()
-            TerrainGenerator().generate(context, Properties.get_all(context.scene))
-            player = PlayerGenerator().generate()
+            TerrainGenerator().generate(context, spectrogram, bpm, config)
+            player = PlayerGenerator().generate(bpm)
             SunGenerator().generate()
             CameraGenerator().generate(player, Properties.get_all(context.scene).file_path)
         except Exception:
@@ -201,15 +204,17 @@ class TerrainGenerator:
         self._terrain = None
         self._context = None
         self._spectrogram = None
+        self._bpm = None
         self._configuration = None
 
     # TODO: place logic in a separate class (also for all the other generated objects (camera, player, ...))
-    def generate(self, context, configuration: TerrainGeneratorConfiguration):
+    def generate(self, context, spectrogram, bpm, configuration: TerrainGeneratorConfiguration):
         self._context = context
         self._configuration = configuration
         self._terrain = Blender.create_blender_object_with_empty_mesh(configuration.object_name,
                                                                       configuration.mesh_name)
-        self._spectrogram = SoundUtils.get_spectrogram(configuration)
+        self._spectrogram = spectrogram
+        self._bpm = bpm
 
         self._initialize_blender_object()
         self._create_terrain_mesh_for_object()
@@ -477,8 +482,10 @@ class PlayerGenerator:
 
     def __init__(self):
         self._player_object = None
+        self._bpm = None
 
-    def generate(self):
+    def generate(self, bpm):
+        self._bpm = bpm
         self._create_player()
         self._create_player_logic()
 
@@ -622,9 +629,9 @@ FragmentShader = """
     
     void main()
     {   
-        float bpm = 169;
+        float bpm = ''' + str(self._bpm) + ''';
         float beatEvery = 60 / bpm;
-        float beatNumber = time / (beatEvery * 2);
+        float beatNumber = time / beatEvery;
         float beatPhase = fract(beatNumber);
         
         vec4 color = vec4(1, 1, 1, 0);
@@ -726,21 +733,21 @@ class SoundUtils:
     """
 
     @staticmethod
-    def get_spectrogram(configuration):
+    def get_song_data(configuration):
         spectrogram = []
+        bpm = 0
         try:
             duration = configuration.duration if configuration.duration> 0 else None
             waveform, sampling_rate = librosa.load(configuration.file_path,  duration=duration,
                                                    offset=configuration.offset)
             spectrogram = librosa.feature.melspectrogram(y=waveform, sr=sampling_rate)
-            beat = librosa.beat.tempo(waveform, sampling_rate)
-            print(beat)
+            [bpm] = librosa.beat.tempo(waveform, sampling_rate)
         except Exception as e:
             print("ERROR LOADING SONG")
             print(str(e))
             traceback.print_exc()
 
-        return spectrogram
+        return spectrogram, bpm
 
 
 class Blender:
