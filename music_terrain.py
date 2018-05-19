@@ -11,7 +11,7 @@ from mathutils import Euler
 bl_info = {
     'name': 'Music Terrain',
     'author': 'Julius Flimmel',
-    'version': (0, 4, 8),
+    'version': (0, 5, 0),
     'category': 'Game Engine',
     'description': 'Add-on for creating a small interactive game, which generates terrain based on music'
 }
@@ -486,7 +486,7 @@ class PlayerGenerator:
 
     def _create_player(self):
         self._player_object = Blender.create_sphere('Player')
-        self._player_object.location = (6.0, 0.0, 1.0)
+        self._player_object.location = (6.0, -1.0, 1.0)
 
     def _create_player_logic(self):
         sensor = self._create_always_sensor()
