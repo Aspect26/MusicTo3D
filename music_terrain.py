@@ -11,7 +11,7 @@ from mathutils import Euler
 bl_info = {
     'name': 'Music Terrain',
     'author': 'Julius Flimmel',
-    'version': (0, 5, 0),
+    'version': (0, 5, 1),
     'category': 'Game Engine',
     'description': 'Add-on for creating a small interactive game, which generates terrain based on music'
 }
@@ -493,7 +493,7 @@ class PlayerGenerator:
 
     def _create_player(self):
         self._player_object = Blender.create_sphere('Player')
-        self._player_object.location = (6.0, 0.0, 1.0)
+        self._player_object.location = (6.0, 3.5, 1.0)
 
     def _create_player_logic(self):
         self._create_logic()
@@ -631,12 +631,13 @@ FragmentShader = """
     {   
         float bpm = ''' + str(self._bpm) + ''';
         float beatEvery = 60 / bpm;
-        float beatNumber = time / beatEvery;
-        float beatPhase = fract(beatNumber);
+        float beatNumber = floor(time / beatEvery);
         
         vec4 color = vec4(1, 1, 1, 0);
-        if (beatPhase < 0.2) {
+        if (mod(beatNumber, 2) == 1) {
             color = vec4(1, 0, 0, 0);
+        } else {
+            color = vec4(0, 1, 1, 0);
         }
         
         gl_FragColor = color * light;
@@ -737,7 +738,7 @@ class SoundUtils:
         spectrogram = []
         bpm = 0
         try:
-            duration = configuration.duration if configuration.duration> 0 else None
+            duration = configuration.duration if configuration.duration > 0 else None
             waveform, sampling_rate = librosa.load(configuration.file_path,  duration=duration,
                                                    offset=configuration.offset)
             spectrogram = librosa.feature.melspectrogram(y=waveform, sr=sampling_rate)
