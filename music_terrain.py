@@ -131,12 +131,12 @@ class GenerationOperator(bpy.types.Operator):
     def execute(self, context):
         try:
             config = Properties.get_all(context.scene)
-            spectrogram, bpm = SoundUtils.get_song_data(config)
+            spectrogram, bpm, average_freqs = SoundUtils.get_song_data(config)
 
             Blender.clear_scene()
             TerrainGenerator().generate(context, spectrogram, bpm, config)
             player = PlayerGenerator().generate(bpm)
-            SunGenerator().generate()
+            SunGenerator().generate(average_freqs)
             CameraGenerator().generate(player, Properties.get_all(context.scene).file_path)
         except Exception:
             traceback.print_exc()
@@ -245,10 +245,8 @@ class TerrainGenerator:
         script = Blender.create_script('terrain_script.py',
 '''
 import bge
-import time
 
 cont = bge.logic.getCurrentController()
-start_time = time.time()
 
 VertexShader = """
     varying vec4 position;  
@@ -359,8 +357,6 @@ for mat in mesh.materials:
     if shader != None:
         if not shader.isValid():
             shader.setSource(VertexShader, FragmentShader, True)
-
-        #shader.setUniform1f('time', time.time() - start_time)
 '''
                                        )
         controller = Blender.create_python_controller(self._terrain)
@@ -473,9 +469,57 @@ for mat in mesh.materials:
 
 class SunGenerator:
 
-    def generate(self):
-        lamp = Blender.create_directional_light()
-        lamp.location = (5.0, 5.0, 5.0)
+    def __init__(self):
+        self._lamp = None
+        self._lightarray = None
+
+    def generate(self, lightarray):
+        self._lightarray = lightarray
+        self._create_camera()
+        self._create_logic()
+
+    def _create_camera(self):
+        self._lamp = Blender.create_directional_light()
+        self._lamp.location = (5.0, 5.0, 5.0)
+
+    def _create_logic(self):
+        sensor = Blender.create_always_sensor(self._lamp)
+        sensor.use_pulse_true_level = True
+
+        controller = Blender.create_python_controller(self._lamp, 'energy_update')
+        controller.text = self._create_energy_update_controller_script()
+
+        sensor.link(controller)
+
+    def _create_energy_update_controller_script(self):
+        return Blender.create_script('energy.py',
+'''
+import bge
+import math
+
+lightarray = ''' + str(self._lightarray) + '''
+
+# TODO: move this preprocessing to addon
+for i in range(len(lightarray)):
+    x = lightarray[i]
+    x = 1 / (1 + math.exp(-x))
+    x = (x - 0.5) * 2
+    x = x + 0.2
+    if x > 1.0:
+        x = 1.0
+    lightarray[i] = x
+
+scene = bge.logic.getCurrentScene()
+cont = bge.logic.getCurrentController()
+light = scene.lights['Directional Light']
+
+offset = -49
+time_to_index = 43.06
+current_time = math.floor(bge.logic.getClockTime() * time_to_index)
+
+light.energy = lightarray[current_time + offset]
+'''
+                                     )
 
 
 class PlayerGenerator:
@@ -493,7 +537,7 @@ class PlayerGenerator:
 
     def _create_player(self):
         self._player_object = Blender.create_sphere('Player')
-        self._player_object.location = (6.0, 3.5, 1.0)
+        self._player_object.location = (6.0, 0.0, 1.0)
 
     def _create_player_logic(self):
         self._create_logic()
@@ -532,19 +576,19 @@ class PlayerGenerator:
 import bge
 
 def playerLogic():
-    
+ 
     controller = bge.logic.getCurrentController();
     player = controller.owner
     keyboard = bge.logic.keyboard
-    
+
     forward_movement = 0.360
     left_movement = 0
     right_movement = 0
-    
+
     aKey = bge.logic.KX_INPUT_ACTIVE == keyboard.events[bge.events.AKEY]
     dKey = bge.logic.KX_INPUT_ACTIVE == keyboard.events[bge.events.DKEY]
     spaceKey = bge.logic.KX_INPUT_JUST_ACTIVATED == keyboard.events[bge.events.SPACEKEY]
-    
+
     side_movement = 0.0
     jump = 0.0
     if aKey:
@@ -553,34 +597,31 @@ def playerLogic():
         side_movement += 0.05
     if spaceKey:
         jump += 0.15
-    
+
     player.applyMovement((side_movement, forward_movement, 0.0), True)
     # player.applyRotation((-0.05, 0.0, 0.0), True)
-    
+ 
 playerLogic()
 """
                                      )
-
     def _create_shaders_controller_script(self):
         return Blender.create_script('player_shaders.py',
 '''
-
+ 
 import bge
-import time
-
+ 
 cont = bge.logic.getCurrentController()
-start_time = time.time()
-
+ 
 VertexShader = """
     varying vec4 position;  
     varying vec4 light; 
-    
+ 
     void main()
     {
         vec3 normalDirection = normalize(gl_NormalMatrix * gl_Normal);
         vec3 lightDirection;
         float attenuation;
- 
+
         // directional light?
         if (0.0 == gl_LightSource[0].position.w) {
            attenuation = 1.0; // no attenuation
@@ -592,7 +633,7 @@ VertexShader = """
            float distance = length(vertexToLightSource);
            attenuation = 1.0 / distance; // linear attenuation 
            lightDirection = normalize(vertexToLightSource);
- 
+
            if (gl_LightSource[0].spotCutoff <= 90.0) // spotlight?
            {
               float clampedCosine = max(0.0, dot(-lightDirection, 
@@ -612,34 +653,34 @@ VertexShader = """
         vec3 diffuseReflection = attenuation 
            * vec3(gl_LightSource[0].diffuse) 
            * max(0.0, dot(normalDirection, lightDirection));
- 
+
         light = vec4(diffuseReflection, 1.0);
         position = gl_Vertex;
-        
+
         gl_Position = gl_ModelViewProjectionMatrix * gl_Vertex;
     }
 """
-
+ 
 FragmentShader = """
     #version 120
     uniform float time;
-    
+
     varying vec4 position; 
     varying vec4 light; 
-    
+
     void main()
     {   
         float bpm = ''' + str(self._bpm) + ''';
         float beatEvery = 60 / bpm;
         float beatNumber = floor(time / beatEvery);
-        
+
         vec4 color = vec4(1, 1, 1, 0);
         if (mod(beatNumber, 2) == 1) {
             color = vec4(1, 0, 0, 0);
         } else {
             color = vec4(0, 1, 1, 0);
         }
-        
+
         gl_FragColor = color * light;
     }
 """
@@ -655,7 +696,6 @@ for mat in mesh.materials:
         shader.setUniform1f('time', bge.logic.getClockTime())
 '''
                                      )
-
     def _create_shaders_update_controller_script(self):
         return Blender.create_script('player_shaders_update.py',
 '''
@@ -737,18 +777,32 @@ class SoundUtils:
     def get_song_data(configuration):
         spectrogram = []
         bpm = 0
+        average_frequency_amplitudes = []
         try:
             duration = configuration.duration if configuration.duration > 0 else None
             waveform, sampling_rate = librosa.load(configuration.file_path,  duration=duration,
                                                    offset=configuration.offset)
             spectrogram = librosa.feature.melspectrogram(y=waveform, sr=sampling_rate)
             [bpm] = librosa.beat.tempo(waveform, sampling_rate)
+            average_frequency_amplitudes = SoundUtils._compute_average_amplitudes(spectrogram)
         except Exception as e:
             print("ERROR LOADING SONG")
             print(str(e))
             traceback.print_exc()
 
-        return spectrogram, bpm
+        return spectrogram, bpm, average_frequency_amplitudes
+
+    @staticmethod
+    def _compute_average_amplitudes(spectrogram):
+        averages = []
+        for time_step in range(len(spectrogram[0])):
+            sum = 0
+            for wavelength in range(len(spectrogram)):
+                sum += spectrogram[wavelength][time_step]
+
+            averages.append(sum / len(spectrogram))
+
+        return averages
 
 
 class Blender:
