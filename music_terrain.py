@@ -486,24 +486,38 @@ class PlayerGenerator:
 
     def _create_player(self):
         self._player_object = Blender.create_sphere('Player')
-        self._player_object.location = (6.0, -1.0, 1.0)
+        self._player_object.location = (6.0, 0.0, 1.0)
 
     def _create_player_logic(self):
-        sensor = self._create_always_sensor()
-        controller = self._create_logic_controller()
-        sensor.link(controller)
+        self._create_logic()
+        self._create_shaders()
+        self._create_shader_update()
 
-    def _create_always_sensor(self):
+    def _create_logic(self):
         sensor = Blender.create_always_sensor(self._player_object)
         sensor.use_pulse_true_level = True
 
-        return sensor
-
-    def _create_logic_controller(self):
-        controller = Blender.create_python_controller(self._player_object, 'logic_controller')
+        controller = Blender.create_python_controller(self._player_object, 'logic')
         controller.text = self._create_logic_controller_script()
 
-        return controller
+        sensor.link(controller)
+
+    def _create_shaders(self):
+        sensor = Blender.create_always_sensor(self._player_object)
+
+        controller = Blender.create_python_controller(self._player_object, 'shaders')
+        controller.text = self._create_shaders_controller_script()
+
+        sensor.link(controller)
+
+    def _create_shader_update(self):
+        sensor = Blender.create_always_sensor(self._player_object)
+        sensor.use_pulse_true_level = True
+
+        controller = Blender.create_python_controller(self._player_object, 'shaders_update')
+        controller.text = self._create_shaders_update_controller_script()
+
+        sensor.link(controller)
 
     def _create_logic_controller_script(self):
         return Blender.create_script('player_logic.py',
@@ -538,7 +552,115 @@ def playerLogic():
     
 playerLogic()
 """
-        )
+                                     )
+
+    def _create_shaders_controller_script(self):
+        return Blender.create_script('player_shaders.py',
+'''
+
+import bge
+import time
+
+cont = bge.logic.getCurrentController()
+start_time = time.time()
+
+VertexShader = """
+    varying vec4 position;  
+    varying vec4 light; 
+    
+    void main()
+    {
+        vec3 normalDirection = normalize(gl_NormalMatrix * gl_Normal);
+        vec3 lightDirection;
+        float attenuation;
+ 
+        // directional light?
+        if (0.0 == gl_LightSource[0].position.w) {
+           attenuation = 1.0; // no attenuation
+           lightDirection = normalize(vec3(gl_LightSource[0].position));
+        } else {
+           vec3 vertexToLightSource = 
+              vec3(gl_LightSource[0].position 
+              - gl_ModelViewMatrix * gl_Vertex);
+           float distance = length(vertexToLightSource);
+           attenuation = 1.0 / distance; // linear attenuation 
+           lightDirection = normalize(vertexToLightSource);
+ 
+           if (gl_LightSource[0].spotCutoff <= 90.0) // spotlight?
+           {
+              float clampedCosine = max(0.0, dot(-lightDirection, 
+                 gl_LightSource[0].spotDirection));
+              if (clampedCosine < gl_LightSource[0].spotCosCutoff) 
+                 // outside of spotlight cone?
+              {
+                 attenuation = 0.0;
+              }
+              else
+              {
+                 attenuation = attenuation * pow(clampedCosine, 
+                    gl_LightSource[0].spotExponent);
+              }
+           }
+        }
+        vec3 diffuseReflection = attenuation 
+           * vec3(gl_LightSource[0].diffuse) 
+           * max(0.0, dot(normalDirection, lightDirection));
+ 
+        light = vec4(diffuseReflection, 1.0);
+        position = gl_Vertex;
+        
+        gl_Position = gl_ModelViewProjectionMatrix * gl_Vertex;
+    }
+"""
+
+FragmentShader = """
+    #version 120
+    uniform float time;
+    
+    varying vec4 position; 
+    varying vec4 light; 
+    
+    void main()
+    {   
+        float bpm = 169;
+        float beatEvery = 60 / bpm;
+        float beatNumber = time / (beatEvery * 2);
+        float beatPhase = fract(beatNumber);
+        
+        vec4 color = vec4(1, 1, 1, 0);
+        if (beatPhase < 0.2) {
+            color = vec4(1, 0, 0, 0);
+        }
+        
+        gl_FragColor = color * light;
+    }
+"""
+
+print('called')
+mesh = cont.owner.meshes[0]
+for mat in mesh.materials:
+    shader = mat.getShader()
+    if shader != None:
+        if not shader.isValid():
+            shader.setSource(VertexShader, FragmentShader, True)
+
+        shader.setUniform1f('time', bge.logic.getClockTime())
+'''
+                                     )
+
+    def _create_shaders_update_controller_script(self):
+        return Blender.create_script('player_shaders_update.py',
+'''
+import bge
+cont = bge.logic.getCurrentController()
+mesh = cont.owner.meshes[0]
+for mat in mesh.materials:
+    shader = mat.getShader()
+    if shader != None:
+        shader.setUniform1f('time', bge.logic.getClockTime())
+
+'''
+                                     )
 
 
 class CameraGenerator:
@@ -611,6 +733,8 @@ class SoundUtils:
             waveform, sampling_rate = librosa.load(configuration.file_path,  duration=duration,
                                                    offset=configuration.offset)
             spectrogram = librosa.feature.melspectrogram(y=waveform, sr=sampling_rate)
+            beat = librosa.beat.tempo(waveform, sampling_rate)
+            print(beat)
         except Exception as e:
             print("ERROR LOADING SONG")
             print(str(e))
