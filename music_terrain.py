@@ -11,7 +11,7 @@ from mathutils import Euler
 bl_info = {
     'name': 'Music Terrain',
     'author': 'Julius Flimmel',
-    'version': (0, 5, 1),
+    'version': (0, 6, 0),
     'category': 'Game Engine',
     'description': 'Add-on for creating a small interactive game, which generates terrain based on music'
 }
@@ -131,7 +131,7 @@ class GenerationOperator(bpy.types.Operator):
     def execute(self, context):
         try:
             config = Properties.get_all(context.scene)
-            spectrogram, bpm, average_freqs = SoundUtils.get_song_data(config)
+            spectrogram, bpm, average_freqs, chromagram = SoundUtils.get_song_data(config)
 
             Blender.clear_scene()
             TerrainGenerator().generate(context, spectrogram, bpm, config)
@@ -778,19 +778,34 @@ class SoundUtils:
         spectrogram = []
         bpm = 0
         average_frequency_amplitudes = []
+        chromagram = []
         try:
             duration = configuration.duration if configuration.duration > 0 else None
             waveform, sampling_rate = librosa.load(configuration.file_path,  duration=duration,
                                                    offset=configuration.offset)
+            waveform_harmonic, _ = librosa.effects.hpss(y=waveform)
+
             spectrogram = librosa.feature.melspectrogram(y=waveform, sr=sampling_rate)
             [bpm] = librosa.beat.tempo(waveform, sampling_rate)
             average_frequency_amplitudes = SoundUtils._compute_average_amplitudes(spectrogram)
+            chromagram = librosa.feature.chroma_cqt(y=waveform_harmonic, sr=sampling_rate)
+
+            # TODO: remove this later
+            print("CHROMAGRAM!")
+            print("len: " + str(len(chromagram)))
+            print("len inside: " + str(len(chromagram[0])))
+            print("len spectr: " + str(len(spectrogram[0])))
+            print("the graph")
+            for chroma in chromagram:
+                str_chroma_vals = [str(val)[:5] for val in chroma[:20]]
+                print(", ".join(str_chroma_vals))
+
         except Exception as e:
             print("ERROR LOADING SONG")
             print(str(e))
             traceback.print_exc()
 
-        return spectrogram, bpm, average_frequency_amplitudes
+        return spectrogram, bpm, average_frequency_amplitudes, chromagram
 
     @staticmethod
     def _compute_average_amplitudes(spectrogram):
