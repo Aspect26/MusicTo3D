@@ -11,7 +11,7 @@ from mathutils import Euler
 bl_info = {
     'name': 'Music Terrain',
     'author': 'Julius Flimmel',
-    'version': (0, 6, 0),
+    'version': (0, 6, 1),
     'category': 'Game Engine',
     'description': 'Add-on for creating a small interactive game, which generates terrain based on music'
 }
@@ -138,6 +138,7 @@ class GenerationOperator(bpy.types.Operator):
             player = PlayerGenerator().generate(bpm)
             SunGenerator().generate(average_freqs)
             CameraGenerator().generate(player, Properties.get_all(context.scene).file_path)
+            ParticlesGenerator().generate(chromagram)
         except Exception:
             traceback.print_exc()
 
@@ -350,7 +351,6 @@ FragmentShader = """
     }
 """
 
-print('called')
 mesh = cont.owner.meshes[0]
 for mat in mesh.materials:
     shader = mat.getShader()
@@ -685,7 +685,6 @@ FragmentShader = """
     }
 """
 
-print('called')
 mesh = cont.owner.meshes[0]
 for mat in mesh.materials:
     shader = mat.getShader()
@@ -766,6 +765,168 @@ class CameraGenerator:
         actuator.sound = Blender.create_sound(self._sound_file_path)
 
         return actuator
+
+
+class ParticlesGenerator:
+
+    _CHROMA_INDEX_TO_NAME = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+    _CHROMA_INDEX_TO_COLOR = [(66, 244, 128), (65, 244, 232), (65, 97, 244), (169, 65, 244), (255, 79, 213),
+                              (255, 79, 79), (255, 152, 79), (255, 237, 79), (175, 255, 79), (66, 244, 128),
+                              (65, 244, 232), (65, 97, 244)]
+    _CHROMA_COUNT = 12
+    _OBJECT_DIAMETER = 0.2
+    _OBJECTS_DISTANCE = 0.2
+    _X_CENTER = 8.0
+    _Z_LOCATION = 3.5
+
+    def generate(self, chromagram):
+        self._generate_chroma_objects()
+
+    @staticmethod
+    def _generate_chroma_objects():
+        chroma_objects = []
+        for chroma_index in range(12):
+            chroma_object = ParticlesGenerator._generate_chroma_object(chroma_index)
+            ParticlesGenerator._create_object_logic(chroma_object, chroma_index)
+
+            chroma_objects.append(chroma_object)
+
+        return chroma_objects
+
+    @staticmethod
+    def _generate_chroma_object(index):
+        chroma_object = Blender.create_sphere(ParticlesGenerator._CHROMA_INDEX_TO_NAME[index], ParticlesGenerator._OBJECT_DIAMETER)
+
+        relative_index = -(ParticlesGenerator._CHROMA_COUNT / 2 - index)
+        x_position = ParticlesGenerator._X_CENTER + relative_index * ParticlesGenerator._OBJECT_DIAMETER + relative_index * ParticlesGenerator._OBJECTS_DISTANCE
+
+        chroma_object.location = (x_position, 0.0, ParticlesGenerator._Z_LOCATION)
+
+        return chroma_object
+
+    @staticmethod
+    def _create_object_logic(chroma_object, chroma_index):
+        ParticlesGenerator._create_object_logic_movement(chroma_object)
+        ParticlesGenerator._create_object_logic_shaders(chroma_object, chroma_index)
+
+    @staticmethod
+    def _create_object_logic_movement(chroma_object):
+        sensor = Blender.create_always_sensor(chroma_object)
+        sensor.use_pulse_true_level = True
+
+        controller = Blender.create_python_controller(chroma_object, 'movement')
+        controller.text = ParticlesGenerator._create_movement_script()
+
+        sensor.link(controller)
+
+    @staticmethod
+    def _create_object_logic_shaders(chroma_object, chroma_index):
+        sensor = Blender.create_always_sensor(chroma_object)
+
+        controller = Blender.create_python_controller(chroma_object, "set_shaders")
+        controller.text = ParticlesGenerator._create_set_shaders_script(chroma_index)
+
+        sensor.link(controller)
+
+    @staticmethod
+    def _create_movement_script():
+        return Blender.create_script('chroma_object_movement.py',
+'''
+import bge
+
+def logic():
+ 
+    controller = bge.logic.getCurrentController();
+    entity = controller.owner
+    entity.applyMovement((0.0, 0.36, 0.0), True)
+ 
+logic()
+'''
+                              )
+    @staticmethod
+    def _create_set_shaders_script(chroma_index):
+        color = ParticlesGenerator._CHROMA_INDEX_TO_COLOR[chroma_index]
+        color_variable = "vec4(" + str(color[0] / 255) + "," + str(color[1] / 255) + "," + str(color[2] / 255) + ", 1" + ")"
+
+        return Blender.create_script('chroma_shaders.py',
+ '''
+import bge
+
+cont = bge.logic.getCurrentController()
+
+VertexShader = """
+    varying vec4 position;  
+    varying vec4 light; 
+
+    void main()
+    {
+        vec3 normalDirection = normalize(gl_NormalMatrix * gl_Normal);
+        vec3 lightDirection;
+        float attenuation;
+
+        // directional light?
+        if (0.0 == gl_LightSource[0].position.w) {
+           attenuation = 1.0; // no attenuation
+           lightDirection = normalize(vec3(gl_LightSource[0].position));
+        } else {
+           vec3 vertexToLightSource = 
+              vec3(gl_LightSource[0].position 
+              - gl_ModelViewMatrix * gl_Vertex);
+           float distance = length(vertexToLightSource);
+           attenuation = 1.0 / distance; // linear attenuation 
+           lightDirection = normalize(vertexToLightSource);
+
+           if (gl_LightSource[0].spotCutoff <= 90.0) // spotlight?
+           {
+              float clampedCosine = max(0.0, dot(-lightDirection, 
+                 gl_LightSource[0].spotDirection));
+              if (clampedCosine < gl_LightSource[0].spotCosCutoff) 
+                 // outside of spotlight cone?
+              {
+                 attenuation = 0.0;
+              }
+              else
+              {
+                 attenuation = attenuation * pow(clampedCosine, 
+                    gl_LightSource[0].spotExponent);
+              }
+           }
+        }
+        vec3 diffuseReflection = attenuation 
+           * vec3(gl_LightSource[0].diffuse) 
+           * max(0.0, dot(normalDirection, lightDirection));
+
+        light = vec4(diffuseReflection, 1.0);
+        position = gl_Vertex;
+
+        gl_Position = gl_ModelViewProjectionMatrix * gl_Vertex;
+    }
+"""
+
+FragmentShader = """
+    #version 120
+
+
+    varying vec4 position; 
+    varying vec4 light; 
+
+    void main()
+    {   
+        vec4 color = ''' + color_variable + ''';
+        gl_FragColor = color * light;
+    }
+"""
+
+mesh = cont.owner.meshes[0]
+for mat in mesh.materials:
+    shader = mat.getShader()
+    if shader != None:
+        if not shader.isValid():
+            shader.setSource(VertexShader, FragmentShader, True)
+    
+        # shader.setUniform1f('time', bge.logic.getClockTime())
+'''
+                                     )
 
 
 class SoundUtils:
@@ -849,16 +1010,20 @@ class Blender:
         return lamp
 
     @staticmethod
-    def create_sphere(name='Sphere'):
+    def create_sphere(name='Sphere', diameter=0.5):
         scene = bpy.context.scene
         mesh = bpy.data.meshes.new('Basic_Sphere')
         sphere_object = bpy.data.objects.new(name, mesh)
         scene.objects.link(sphere_object)
 
         bm = bmesh.new()
-        bmesh.ops.create_uvsphere(bm, u_segments=32, v_segments=16, diameter=0.5)
+        bmesh.ops.create_uvsphere(bm, u_segments=32, v_segments=16, diameter=diameter)
         bm.to_mesh(mesh)
         bm.free()
+
+        # NOTE: this is required because without this, the shaders won't work on this object!
+        empty_material = bpy.data.materials.new(name="EmptyMaterial")
+        sphere_object.data.materials.append(empty_material)
 
         return sphere_object
 
