@@ -11,12 +11,13 @@ from mathutils import Euler
 bl_info = {
     'name': 'Music Terrain',
     'author': 'Julius Flimmel',
-    'version': (0, 6, 1),
+    'version': (0, 6, 2),
     'category': 'Game Engine',
     'description': 'Add-on for creating a small interactive game, which generates terrain based on music'
 }
 
 # TODO: put the script codes to different files, OMFG
+# TODO: many scripts are duplicitly created
 
 
 def register():
@@ -695,6 +696,7 @@ for mat in mesh.materials:
         shader.setUniform1f('time', bge.logic.getClockTime())
 '''
                                      )
+
     def _create_shaders_update_controller_script(self):
         return Blender.create_script('player_shaders_update.py',
 '''
@@ -780,14 +782,14 @@ class ParticlesGenerator:
     _Z_LOCATION = 3.5
 
     def generate(self, chromagram):
-        self._generate_chroma_objects()
+        self._generate_chroma_objects(chromagram)
 
     @staticmethod
-    def _generate_chroma_objects():
+    def _generate_chroma_objects(chromagram):
         chroma_objects = []
         for chroma_index in range(12):
             chroma_object = ParticlesGenerator._generate_chroma_object(chroma_index)
-            ParticlesGenerator._create_object_logic(chroma_object, chroma_index)
+            ParticlesGenerator._create_object_logic(chroma_object, chroma_index, chromagram[chroma_index])
 
             chroma_objects.append(chroma_object)
 
@@ -805,9 +807,10 @@ class ParticlesGenerator:
         return chroma_object
 
     @staticmethod
-    def _create_object_logic(chroma_object, chroma_index):
+    def _create_object_logic(chroma_object, chroma_index, chromagram):
         ParticlesGenerator._create_object_logic_movement(chroma_object)
         ParticlesGenerator._create_object_logic_shaders(chroma_object, chroma_index)
+        ParticlesGenerator._create_object_logic_shaders_update(chroma_object, chromagram)
 
     @staticmethod
     def _create_object_logic_movement(chroma_object):
@@ -829,6 +832,16 @@ class ParticlesGenerator:
         sensor.link(controller)
 
     @staticmethod
+    def _create_object_logic_shaders_update(chroma_object, chromagram):
+        sensor = Blender.create_always_sensor(chroma_object)
+        sensor.use_pulse_true_level = True
+
+        controller = Blender.create_python_controller(chroma_object, "shaders_update")
+        controller.text = ParticlesGenerator._create_shaders_update_script(chromagram)
+
+        sensor.link(controller)
+
+    @staticmethod
     def _create_movement_script():
         return Blender.create_script('chroma_object_movement.py',
 '''
@@ -843,10 +856,11 @@ def logic():
 logic()
 '''
                               )
+
     @staticmethod
     def _create_set_shaders_script(chroma_index):
         color = ParticlesGenerator._CHROMA_INDEX_TO_COLOR[chroma_index]
-        color_variable = "vec4(" + str(color[0] / 255) + "," + str(color[1] / 255) + "," + str(color[2] / 255) + ", 1" + ")"
+        color_variable = "vec3(" + str(color[0] / 255) + "," + str(color[1] / 255) + "," + str(color[2] / 255) + ")"
 
         return Blender.create_script('chroma_shaders.py',
  '''
@@ -905,15 +919,15 @@ VertexShader = """
 
 FragmentShader = """
     #version 120
-
+    uniform float multiplier;
 
     varying vec4 position; 
     varying vec4 light; 
 
     void main()
     {   
-        vec4 color = ''' + color_variable + ''';
-        gl_FragColor = color * light;
+        vec3 color = ''' + color_variable + ''';
+        gl_FragColor = vec4((color * multiplier), 1) * light;
     }
 """
 
@@ -924,7 +938,26 @@ for mat in mesh.materials:
         if not shader.isValid():
             shader.setSource(VertexShader, FragmentShader, True)
     
-        # shader.setUniform1f('time', bge.logic.getClockTime())
+        shader.setUniform1f('multiplier', 0.0)
+'''
+                                     )
+
+    @staticmethod
+    def _create_shaders_update_script(chromagram):
+        chromagram = [x.item() for x in chromagram]
+        return Blender.create_script('chroma_shaders_update.py',
+'''
+import bge
+cont = bge.logic.getCurrentController()
+mesh = cont.owner.meshes[0]
+chromagram = ''' + str(chromagram) + '''
+for mat in mesh.materials:
+    shader = mat.getShader()
+    if shader != None:
+        time = int(bge.logic.getClockTime() * 43)
+        value = chromagram[time] if chromagram[time] > 0.85 else 0.0
+        shader.setUniform1f('multiplier', value)
+
 '''
                                      )
 
